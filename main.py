@@ -10,7 +10,8 @@ app = FastAPI()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Variables Google Search (claramente añadidas aquí)
-GOOGLE_API_KEY = "AIzaSyBn_GXjQfgf9CYDb5ji9iVI7-q9XyiMNPY"
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+
 GOOGLE_CX = "0650d571365cd4765"
 
 class Peticion(BaseModel):
