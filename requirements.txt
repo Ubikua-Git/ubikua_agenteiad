@@ -2,3 +2,7 @@ fastapi
 uvicorn[standard]
 openai
 requests
+PyPDF2
+python-docx
+pytesseract
+Pillow

@@ -3,7 +3,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $mensaje_usuario = $_POST['mensaje'];
     $datos = json_encode(['mensaje' => $mensaje_usuario]);
 
-    $ch = curl_init('https://api-asistente-rghp.onrender.com/consulta'); // Tu URL API
+    $ch = curl_init('https://api-asistente-rghp.onrender.com/consulta');
     curl_setopt($ch, CURLOPT_POSTFIELDS, $datos);
     curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);

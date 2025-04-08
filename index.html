@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Asistente IA - Ashotel</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Source+Sans+Pro&display=swap" rel="stylesheet">
+  <link rel="icon" href="https://ashotel.es/favicon.ico">
+  <style>
+    body { font-family: 'Source Sans Pro', sans-serif; }
+    .scroll-area { max-height: 400px; overflow-y: auto; }
+    .bg-ashotel { background-color: #039cde; }
+  </style>
+</head>
+<body class="bg-gray-100">
+
+<header class="bg-ashotel p-4 shadow-md">
+  <img src="https://ashotel.es/wp-content/themes/genesis-sample/images/logo-ashotel.png" alt="Ashotel" width="100" height="100" class="mx-auto">
+</header>
+
+<div class="max-w-3xl mx-auto my-8 p-6 bg-white rounded-lg shadow-lg">
+  <h1 class="text-2xl font-bold mb-6 text-gray-700"><i class="fa-solid fa-comments"></i> Asistente IA Ashotel</h1>
+
+  <textarea id="consulta" class="w-full border-2 rounded-lg p-3 text-gray-700" rows="4" placeholder="Escribe aquí tu consulta..."></textarea>
+  <button onclick="enviarConsulta()" class="mt-4 bg-ashotel hover:bg-blue-700 text-white py-2 px-4 rounded">
+    <i class="fa-solid fa-paper-plane"></i> Enviar Consulta
+  </button>
+
+  <div id="resultado" class="mt-6 p-4 bg-gray-50 rounded-lg scroll-area"></div>
+  <button onclick="copiarResultado()" class="mt-4 bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded">
+    <i class="fa-solid fa-copy"></i> Copiar al portapapeles
+  </button>
+
+  <h2 class="mt-8 text-xl font-semibold"><i class="fa-solid fa-history"></i> Historial de Conversaciones</h2>
+  <div id="historial" class="mt-2 p-4 bg-gray-50 rounded-lg scroll-area"></div>
+
+  <h2 class="mt-8 text-xl font-semibold"><i class="fa-solid fa-file-upload"></i> Análisis de Documentos</h2>
+  <form id="formSubida" enctype="multipart/form-data">
+    <input type="file" id="archivo" name="archivo" required class="mt-4">
+    <button type="submit" class="mt-4 bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded">
+      <i class="fa-solid fa-file-import"></i> Analizar documento
+    </button>
+  </form>
+  <div id="resultadoDoc" class="mt-4 bg-gray-50 rounded-lg p-4"></div>
+</div>
+
+<footer class="bg-gray-200 text-center p-4">
+  <p>&copy; 2025 - Desarrollado por <strong>UBIKUA</strong></p>
+  <img src="https://ubikua.es/smartcity/img/logo_ubikua.jpg" alt="Ubikua" width="64" height="64" class="mx-auto mt-2">
+</footer>
+
+<script>
+  let historial = JSON.parse(localStorage.getItem('historialAshotel')) || [];
+
+  function mostrarHistorial() {
+    const historialDiv = document.getElementById('historial');
+    historialDiv.innerHTML = historial.map(item => 
+      `<div class="mb-2 p-2 border-b">
+        <strong>Consulta:</strong> ${item.consulta}<br>
+        <strong>Respuesta:</strong> ${item.respuesta}
+      </div>`
+    ).join('');
+  }
+
+  async function enviarConsulta() {
+    let mensaje = document.getElementById('consulta').value;
+    let resultadoDiv = document.getElementById('resultado');
+    resultadoDiv.innerHTML = "Consultando...";
+
+    let response = await fetch('consulta.php', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: 'mensaje=' + encodeURIComponent(mensaje)
+    });
+    let respuesta = await response.text();
+    resultadoDiv.innerHTML = respuesta;
+
+    historial.unshift({consulta: mensaje, respuesta});
+    localStorage.setItem('historialAshotel', JSON.stringify(historial));
+    mostrarHistorial();
+  }
+
+  function copiarResultado() {
+    const resultadoTexto = document.getElementById('resultado').innerText;
+    navigator.clipboard.writeText(resultadoTexto).then(() => {
+      alert('¡Copiado al portapapeles!');
+    });
+  }
+
+  document.getElementById('formSubida').onsubmit = async function(event) {
+    event.preventDefault();
+    let archivo = document.getElementById('archivo').files[0];
+    let formData = new FormData();
+    formData.append('file', archivo);
+
+    let response = await fetch('https://api-asistente-rghp.onrender.com/analizar-documento', {
+      method: 'POST',
+      body: formData
+    });
+
+    let resultado = await response.json();
+    document.getElementById('resultadoDoc').innerText = resultado.informe;
+  };
+
+  document.addEventListener('DOMContentLoaded', mostrarHistorial);
+</script>
+
+</body>
+</html>

@@ -1,46 +1,49 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import FastAPI, File, UploadFile
 from openai import OpenAI
-import os
-import requests
+import os, shutil
+from PyPDF2 import PdfReader
+from docx import Document
+import pytesseract
+from PIL import Image
 
 app = FastAPI()
-
-# Cliente OpenAI con API Key
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Variables Google Search (claramente añadidas aquí)
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+def extraer_texto(ruta_archivo, extension):
+    texto = ""
+    if extension == "pdf":
+        with open(ruta_archivo, 'rb') as archivo:
+            lector = PdfReader(archivo)
+            for pagina in lector.pages:
+                texto += pagina.extract_text() or ""
+    elif extension in ["doc", "docx"]:
+        doc = Document(ruta_archivo)
+        texto = "\n".join([parrafo.text for parrafo in doc.paragraphs])
+    elif extension in ["png", "jpg", "jpeg"]:
+        imagen = Image.open(ruta_archivo)
+        texto = pytesseract.image_to_string(imagen, lang="spa")
+    return texto
 
-GOOGLE_CX = "0650d571365cd4765"
+@app.post("/analizar-documento")
+async def analizar_documento(file: UploadFile = File(...)):
+    extension = file.filename.split('.')[-1].lower()
+    ruta_temporal = f"/tmp/{file.filename}"
+    with open(ruta_temporal, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
 
-class Peticion(BaseModel):
-    mensaje: str
-    buscar_web: bool = False  # Indica si debe buscar en la web
-
-def buscar_google(termino):
-    url = f"https://www.googleapis.com/customsearch/v1?key={GOOGLE_API_KEY}&cx={GOOGLE_CX}&q={termino}"
-    resultado = requests.get(url).json()
-    snippets = [item['snippet'] for item in resultado.get('items', [])[:3]]
-    return "\n".join(snippets)
-
-@app.post("/consulta")
-def consultar_agente(datos: Peticion):
-    contenido_mensaje = datos.mensaje
-
-    # Si el usuario pidió búsqueda web explícitamente
-    if datos.buscar_web:
-        info_web = buscar_google(contenido_mensaje)
-        contenido_mensaje += f"\n\nInformación reciente desde la web:\n{info_web}"
+    texto_extraido = extraer_texto(ruta_temporal, extension)
+    
+    # Comprueba que se extrajo algo
+    if not texto_extraido.strip():
+        texto_extraido = "No se pudo extraer texto del archivo."
 
     respuesta = client.chat.completions.create(
         model="gpt-4-turbo",
         messages=[
-            {"role": "system", "content": (
-                "Eres experto en marketing, redes sociales y eventos turísticos para Ashotel. "
-                "Integra claramente cualquier información adicional proporcionada."
-            )},
-            {"role": "user", "content": contenido_mensaje}
+            {"role": "system", "content": "Eres un experto en redactar informes analíticos a partir de documentos proporcionados."},
+            {"role": "user", "content": f"Redacta un informe analítico claro y estructurado basado en el siguiente texto extraído:\n\n{texto_extraido}"}
         ]
     )
-    return {"respuesta": respuesta.choices[0].message.content.strip()}
+
+    os.remove(ruta_temporal)
+    return {"informe": respuesta.choices[0].message.content.strip()}
