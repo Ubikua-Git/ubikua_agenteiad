@@ -1,5 +1,5 @@
 from fastapi import FastAPI, File, UploadFile
-from fastapi.middleware.cors import CORSMiddleware  # <-- Importa CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from openai import OpenAI
 import os, shutil
@@ -10,10 +10,10 @@ from PIL import Image
 
 app = FastAPI()
 
-# Agrega la configuración de CORS (permite todas las conexiones)
+# Configuración de CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Puedes restringirlo a dominios específicos si lo prefieres
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -55,6 +55,7 @@ def consultar_agente(datos: Peticion):
         "contabilidad": "Eres un experto en Contabilidad, especializado en finanzas, análisis contable y gestión económica.",
         "administracion": "Eres un experto en Administración, especializado en procesos, organización y gestión empresarial.",
     }
+
     system_prompt = prompt_especializaciones.get(especializacion, "Eres un asistente versátil y confiable.")
 
     respuesta = client.chat.completions.create(
@@ -64,6 +65,7 @@ def consultar_agente(datos: Peticion):
             {"role": "user", "content": mensaje}
         ]
     )
+
     return {"respuesta": respuesta.choices[0].message.content.strip()}
 
 @app.post("/analizar-documento")
@@ -72,13 +74,24 @@ async def analizar_documento(file: UploadFile = File(...)):
     ruta_temporal = f"/tmp/{file.filename}"
     with open(ruta_temporal, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
+
     texto_extraido = extraer_texto(ruta_temporal, extension)
+
+    prompt = (
+        "Redacta un informe profesional claro y estructurado basado en el siguiente texto extraído. "
+        "Usa formato HTML con etiquetas como <h1>, <h2>, <p>, <ul>, <li>, <strong>, <em>. "
+        "No utilices Markdown ni asteriscos. Devuelve solo HTML bien formateado, sin explicación adicional.\n\n"
+        f"{texto_extraido}"
+    )
+
     respuesta = client.chat.completions.create(
         model="gpt-4-turbo",
         messages=[
-            {"role": "system", "content": "Eres experto en redactar informes analíticos a partir de documentos proporcionados."},
-            {"role": "user", "content": f"Redacta un informe analítico claro y estructurado basado en el siguiente texto extraído:\n\n{texto_extraido}"}
+            {"role": "system", "content": "Eres experto en redactar informes en HTML estructurado y profesional."},
+            {"role": "user", "content": prompt}
         ]
     )
+
     os.remove(ruta_temporal)
+
     return {"informe": respuesta.choices[0].message.content.strip()}
