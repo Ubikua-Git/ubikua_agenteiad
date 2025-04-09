@@ -78,11 +78,13 @@ def consultar_agente(datos: Peticion):
     mensaje = datos.mensaje
     buscar_web = bool(datos.buscar_web)
 
-    base_prompt = (
-        "Eres el Asistente IA oficial de Ashotel, la Asociación Hotelera y Extrahotelera de Tenerife, La Palma, La Gomera y El Hierro. "
-        "Tu misión es ayudar a los distintos equipos internos de Ashotel con respuestas claras, precisas, y alineadas a sus objetivos estratégicos. "
-        "Si no tienes información directa, debes consultar fuentes externas y ofrecer un resumen útil. "
-    )
+base_prompt = (
+    "Eres el Asistente IA oficial de Ashotel, la Asociación Hotelera y Extrahotelera de Tenerife, La Palma, La Gomera y El Hierro. "
+    "Tu misión es ayudar a los distintos equipos internos de Ashotel con respuestas claras, precisas, y alineadas a sus objetivos estratégicos. "
+    "Si no tienes información directa, debes consultar fuentes externas y ofrecer un resumen útil. "
+    "Cuando respondas con listas estructuradas o datos comparativos, utiliza siempre tablas en formato HTML (<table>, <tr>, <td>). "
+    "No uses Markdown ni tablas de texto plano con líneas y guiones."
+)
     system_prompt = f"{base_prompt} {prompt_especializaciones.get(especializacion, '')}"
 
     # Mostrar en logs si búsqueda web fue activada
