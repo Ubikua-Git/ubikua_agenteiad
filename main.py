@@ -75,8 +75,8 @@ def buscar_google(query):
 @app.post("/consulta")
 def consultar_agente(datos: Peticion):
     especializacion = datos.especializacion.lower()
-    buscar_web = datos.buscar_web
     mensaje = datos.mensaje
+    buscar_web = bool(datos.buscar_web)
 
     base_prompt = (
         "Eres el Asistente IA oficial de Ashotel, la Asociación Hotelera y Extrahotelera de Tenerife, La Palma, La Gomera y El Hierro. "
@@ -85,7 +85,10 @@ def consultar_agente(datos: Peticion):
     )
     system_prompt = f"{base_prompt} {prompt_especializaciones.get(especializacion, '')}"
 
-    # Primera respuesta del modelo
+    # Mostrar en logs si búsqueda web fue activada
+    print("🔍 Búsqueda Web activada manualmente:", buscar_web)
+
+    # Primera consulta al modelo
     respuesta = client.chat.completions.create(
         model="gpt-4-turbo",
         messages=[
@@ -93,15 +96,26 @@ def consultar_agente(datos: Peticion):
             {"role": "user", "content": mensaje}
         ]
     )
-
     texto_respuesta = respuesta.choices[0].message.content.strip()
 
-    # Detectar si es una respuesta vaga
-    if any(frase in texto_respuesta.lower() for frase in [
-        "no tengo información", "no dispongo de información", "no estoy seguro", "no encontré datos"
-    ]) or buscar_web:
+    # Detectar si GPT no sabe la respuesta o el usuario forzó la búsqueda web
+    activar_busqueda = buscar_web or any(
+        frase in texto_respuesta.lower()
+        for frase in [
+            "no tengo información",
+            "no dispongo de información",
+            "no estoy seguro",
+            "no encontré datos",
+            "no tengo acceso"
+        ]
+    )
+
+    if activar_busqueda:
+        print("🧠 Lanzando búsqueda web automática...")
         web_resultados = buscar_google(mensaje)
         contexto = f"Estos son algunos resultados obtenidos desde la web relacionados con la consulta:\n{web_resultados}"
+
+        # Segunda consulta con contexto web
         respuesta_final = client.chat.completions.create(
             model="gpt-4-turbo",
             messages=[
@@ -112,6 +126,7 @@ def consultar_agente(datos: Peticion):
         texto_respuesta = respuesta_final.choices[0].message.content.strip()
 
     return {"respuesta": texto_respuesta}
+
 
 @app.post("/analizar-documento")
 async def analizar_documento(
