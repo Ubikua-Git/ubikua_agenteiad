@@ -46,17 +46,18 @@ def consultar_agente(datos: Peticion):
     especializacion = datos.especializacion.lower()
     mensaje = datos.mensaje
 
-    prompt_especializaciones = {
-        "comunicacion": "Eres un experto en Comunicación, especializado en relaciones públicas, marketing y redacción publicitaria.",
-        "formacion": "Eres un experto en Formación, especializado en pedagogía, metodologías educativas y diseño de cursos.",
-        "informatica": "Eres un experto en Informática, especializado en tecnología, desarrollo de software y soporte técnico.",
-        "direccion": "Eres un experto en Dirección, especializado en liderazgo, estrategia empresarial y gestión organizacional.",
-        "innovacion": "Eres un experto en Innovación, especializado en tendencias tecnológicas, creatividad empresarial y transformación digital.",
-        "contabilidad": "Eres un experto en Contabilidad, especializado en finanzas, análisis contable y gestión económica.",
-        "administracion": "Eres un experto en Administración, especializado en procesos, organización y gestión empresarial.",
-    }
+prompt_especializaciones = {
+    "comunicacion": "Eres un experto en Comunicación, especializado en relaciones públicas, marketing y redacción publicitaria.",
+    "formacion": "Eres un experto en Formación, especializado en pedagogía, metodologías educativas y diseño de cursos.",
+    "informatica": "Eres un experto en Informática, especializado en tecnología, desarrollo de software y soporte técnico.",
+    "direccion": "Eres un experto en Dirección, especializado en liderazgo, estrategia empresarial y gestión organizacional.",
+    "innovacion": "Eres un experto en Innovación, especializado en tendencias tecnológicas, creatividad empresarial y transformación digital.",
+    "contabilidad": "Eres un experto en Contabilidad, especializado en finanzas, análisis contable y gestión económica.",
+    "administracion": "Eres un experto en Administración, especializado en procesos, organización y gestión empresarial.",
+    "legal": "Eres un experto jurídico en el Departamento Legal, especializado en normativas, redacción de documentos legales y asesoramiento institucional."
+}
 
-    system_prompt = prompt_especializaciones.get(especializacion, "Eres un asistente versátil y confiable.")
+system_prompt = prompt_especializaciones.get(especializacion, "Eres un asistente versátil y confiable.")
 
     respuesta = client.chat.completions.create(
         model="gpt-4-turbo",
