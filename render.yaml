@@ -8,7 +8,7 @@ services:
     branch: main # La rama que Render debe desplegar
     dockerfilePath: ./Dockerfile # Ruta al Dockerfile dentro del repositorio
     # region: frankfurt # Opcional: Especifica la región si es necesario (ej. Oregon, Frankfurt)
-    plan: Starter # Especifica el plan de instancia (ej. starter, standard, etc. - verifica tu plan actual)
+    plan: starter # Especifica el plan de instancia (ej. starter, standard, etc. - verifica tu plan actual)
     envVars: # Define las variables de entorno necesarias
       - key: PYTHON_VERSION # Opcional, pero buena práctica
         value: '3.11'
