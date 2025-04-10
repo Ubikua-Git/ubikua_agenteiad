@@ -312,8 +312,16 @@ async def analizar_documento(
                 with open(ruta_temporal, "wb") as buffer: shutil.copyfileobj(file.file, buffer); temp_file_saved = True
                 texto_extraido = extraer_texto_pdf_docx(ruta_temporal, extension)
             finally:
-                if temp_file_saved and os.path.exists(ruta_temporal): try: os.remove(ruta_temporal) except OSError as e: logging.error(f"Error borrar temp {ruta_temporal}: {e}")
-            if texto_extraido.startswith("[Error"): raise ValueError(texto_extraido)
+# --- BLOQUE CORREGIDO ---
+        finally:
+            # Asegurarse de borrar el temporal si se guardó y aún existe
+            if temp_file_saved and os.path.exists(ruta_temporal):
+                try:
+                    os.remove(ruta_temporal)
+                    logging.info(f"Archivo temporal eliminado: {ruta_temporal}")
+                except OSError as e:
+                     logging.error(f"Error al eliminar archivo temporal {ruta_temporal}: {e}")
+# --- FIN BLOQUE CORREGIDO ---            if texto_extraido.startswith("[Error"): raise ValueError(texto_extraido)
             if not texto_extraido: raise ValueError("No se extrajo texto del PDF/DOCX.")
             user_prompt_text = (f"Redacta un informe profesional HTML basado en el texto extraído:\n--- INICIO ---\n{texto_extraido}\n--- FIN ---\n" "Sigue formato HTML (h2, h3, p, ul, li, strong, em), evita Markdown. Devuelve solo HTML.")
             messages_payload = [ {"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt_text} ]
