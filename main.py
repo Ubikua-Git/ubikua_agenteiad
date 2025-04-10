@@ -7,19 +7,25 @@ import shutil
 import requests
 import base64
 import logging
-import pymysql # <-- Añadido
-import pymysql.cursors # <-- Añadido
+import pymysql # Necesario para conexión MySQL/MariaDB
+import pymysql.cursors
 from PyPDF2 import PdfReader, errors as pdf_errors
 from docx import Document
 from docx.opc.exceptions import PackageNotFoundError
+# BeautifulSoup es opcional, solo para limpieza extra de HTML
+try:
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except ImportError:
+    BS4_AVAILABLE = False
 
 # Configurar logging básico
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 app = FastAPI(
-    title="Asistente IA Ashotel API v2.1 (Personalizado)",
+    title="Asistente IA Ashotel API v2.1.1 (Personalizado)",
     description="API para consultas y análisis de documentos con prompts personalizados por usuario.",
-    version="2.1.0"
+    version="2.1.1" # Incremento versión por corrección
 )
 
 # Configuración CORS
@@ -44,15 +50,15 @@ try:
     GOOGLE_CX = os.getenv("GOOGLE_CX")
     if not GOOGLE_API_KEY or not GOOGLE_CX: logging.warning("Variables GOOGLE_API_KEY/GOOGLE_CX no encontradas.")
 
-    # --- NUEVO: Credenciales Base de Datos ---
+    # --- Credenciales Base de Datos ---
     DB_HOST = os.getenv("DB_HOST")
     DB_USER = os.getenv("DB_USER")
     DB_PASS = os.getenv("DB_PASS")
     DB_NAME = os.getenv("DB_NAME")
-    DB_PORT = int(os.getenv("DB_PORT", 3306)) # Puerto MySQL/MariaDB por defecto
+    DB_PORT = int(os.getenv("DB_PORT", 3306))
 
     if not DB_HOST or not DB_USER or not DB_PASS or not DB_NAME:
-        logging.warning("Faltan variables de entorno DB (DB_HOST, DB_USER, DB_PASS, DB_NAME). No se leerán prompts personalizados.")
+        logging.warning("Faltan variables de entorno DB. No se leerán prompts personalizados.")
         DB_CONFIGURED = False
     else:
         DB_CONFIGURED = True
@@ -60,10 +66,10 @@ try:
 
 except ValueError as e:
     logging.error(f"Error de configuración inicial: {e}")
-    client = None; DB_CONFIGURED = False # Marcar como no configurado si falla
+    client = None; DB_CONFIGURED = False
 except Exception as e:
     logging.error(f"Error inesperado al inicializar: {e}")
-    client = None; GOOGLE_API_KEY = None; GOOGLE_CX = None; DB_CONFIGURED = False # Marcar como no configurado si falla
+    client = None; GOOGLE_API_KEY = None; GOOGLE_CX = None; DB_CONFIGURED = False
 
 
 # --- Modelos de Datos (Pydantic) ---
@@ -71,7 +77,7 @@ class PeticionConsulta(BaseModel):
     mensaje: str = Field(..., min_length=1)
     especializacion: str = Field(default="general")
     buscar_web: bool = Field(default=False)
-    user_id: int | None = None # <-- AÑADIDO user_id opcional
+    user_id: int | None = None # user_id opcional
 
 class RespuestaConsulta(BaseModel):
     respuesta: str
@@ -87,7 +93,6 @@ BASE_PROMPT_CONSULTA = (
     "Cuando respondas con listas estructuradas o datos comparativos, utiliza siempre tablas en formato HTML (usa <table>, <thead>, <tbody>, <tr>, <th>, <td>). "
     "Para listas simples, usa <ul> y <li>. Para enfatizar, usa <strong> o <em>. "
     "Evita usar Markdown. Tu respuesta debe ser directamente HTML renderizable."
-    # El prompt personalizado se añadirá después si existe
 )
 BASE_PROMPT_ANALISIS_DOC = (
     "Eres el Asistente IA oficial de Ashotel, experto en redactar informes profesionales concisos y claros "
@@ -96,7 +101,6 @@ BASE_PROMPT_ANALISIS_DOC = (
     "Usa encabezados (<h2>, <h3>), párrafos (<p>), listas (<ul>, <li>), y énfasis (<strong>, <em>) apropiadamente. "
     "La respuesta debe ser únicamente el código HTML del informe, sin explicaciones previas o posteriores. "
     "Adapta ligeramente el tono y enfoque según la especialización indicada."
-     # El prompt personalizado se añadirá después si existe
 )
 PROMPT_ESPECIALIZACIONES = {
     "general": "Actúa como un asistente generalista.",
@@ -122,25 +126,16 @@ logging.info(f"Directorio temporal: {TEMP_DIR}")
 
 # --- Funciones Auxiliares ---
 
-# NUEVO: Función para conectar a la BD
+# Función para conectar a la BD
 def get_db_connection():
-    if not DB_CONFIGURED:
-        logging.warning("Intento de conexión a BD fallido: Configuración incompleta.")
-        return None
+    if not DB_CONFIGURED: return None
     try:
-        conn = pymysql.connect(
-            host=DB_HOST, user=DB_USER, password=DB_PASS, database=DB_NAME,
-            port=DB_PORT, cursorclass=pymysql.cursors.DictCursor,
-            charset='utf8mb4', connect_timeout=5
-        )
+        conn = pymysql.connect( host=DB_HOST, user=DB_USER, password=DB_PASS, database=DB_NAME, port=DB_PORT, cursorclass=pymysql.cursors.DictCursor, charset='utf8mb4', connect_timeout=5 )
         return conn
-    except pymysql.MySQLError as e:
-        logging.error(f"Error al conectar a la BD ({DB_HOST}:{DB_PORT}): {e}")
-        return None
+    except pymysql.MySQLError as e: logging.error(f"Error conectar BD ({DB_HOST}:{DB_PORT}): {e}"); return None
 
-# Función extraer_texto_pdf_docx (sin cambios respecto a v2.0.0)
+# Función extraer_texto_pdf_docx
 def extraer_texto_pdf_docx(ruta_archivo: str, extension: str) -> str:
-    # ... (pega aquí el código completo de esta función de tu versión anterior) ...
     texto = ""
     logging.info(f"Extrayendo texto de: {ruta_archivo} (Ext: {extension})")
     try:
@@ -155,20 +150,17 @@ def extraer_texto_pdf_docx(ruta_archivo: str, extension: str) -> str:
             doc = Document(ruta_archivo)
             texto = "\n".join([p.text for p in doc.paragraphs if p.text])
         else: return "" # No debería llegar aquí
-        logging.info(f"Texto extraído (longitud: {len(texto)}).")
+        logging.info(f"Texto extraído PDF/DOCX (longitud: {len(texto)}).")
         return texto.strip()
-    except pdf_errors.PdfReadError as e: return f"[Error PDF: {e}]"
-    except PackageNotFoundError: return "[Error DOCX: Archivo inválido]"
-    except FileNotFoundError: return "[Error interno: Archivo temporal no encontrado]"
+    except pdf_errors.PdfReadError as e: logging.error(f"Error leer PDF {ruta_archivo}: {e}"); return f"[Error PDF: No se pudo leer, dañado o protegido?]"
+    except PackageNotFoundError: logging.error(f"Error DOCX {ruta_archivo}: No es válido."); return "[Error DOCX: Archivo inválido]"
+    except FileNotFoundError: logging.error(f"Error interno: {ruta_archivo} no encontrado."); return "[Error interno: Archivo temporal no encontrado]"
     except Exception as e: logging.error(f"Error extraer PDF/DOCX {ruta_archivo}: {e}"); return "[Error interno procesando PDF/DOCX.]"
 
-
-# Función buscar_google (sin cambios respecto a v2.0.0)
+# Función buscar_google
 def buscar_google(query: str) -> str:
-    # ... (pega aquí el código completo de esta función de tu versión anterior) ...
     if not GOOGLE_API_KEY or not GOOGLE_CX: return "<p><i>[Búsqueda web no disponible.]</i></p>"
-    url = "https://www.googleapis.com/customsearch/v1"
-    params = {"key": GOOGLE_API_KEY, "cx": GOOGLE_CX, "q": query, "num": 3}
+    url = "https://www.googleapis.com/customsearch/v1"; params = {"key": GOOGLE_API_KEY, "cx": GOOGLE_CX, "q": query, "num": 3}
     logging.info(f"Buscando en Google: '{query}'")
     try:
         response = requests.get(url, params=params, timeout=10); response.raise_for_status()
@@ -188,13 +180,13 @@ def buscar_google(query: str) -> str:
 # --- Endpoints de la API ---
 
 @app.post("/consulta", response_model=RespuestaConsulta)
-def consultar_agente(datos: PeticionConsulta): # Modelo actualizado
+def consultar_agente(datos: PeticionConsulta):
     if not client: raise HTTPException(status_code=503, detail="Servicio IA no configurado.")
 
     especializacion = datos.especializacion.lower()
     mensaje_usuario = datos.mensaje
     forzar_busqueda_web = datos.buscar_web
-    current_user_id = datos.user_id # <-- Obtener user_id
+    current_user_id = datos.user_id
     logging.info(f"Consulta: User={current_user_id}, Espec='{especializacion}', Web={forzar_busqueda_web}")
 
     # --- Obtener Prompt Personalizado ---
@@ -210,11 +202,8 @@ def consultar_agente(datos: PeticionConsulta): # Modelo actualizado
                     if result and result.get('custom_prompt'):
                         custom_prompt_text = result['custom_prompt'].strip()
                         if custom_prompt_text: logging.info(f"Prompt personalizado OK para user: {current_user_id}")
-            except pymysql.MySQLError as e:
-                logging.error(f"Error BD get prompt user {current_user_id}: {e}")
-            finally:
-                conn.close()
-        else: logging.error(f"No se pudo conectar a BD para prompt.")
+            except pymysql.MySQLError as e: logging.error(f"Error BD get prompt user {current_user_id}: {e}")
+            finally: conn.close()
 
     # --- Construir Prompt del Sistema Final ---
     prompt_especifico = PROMPT_ESPECIALIZACIONES.get(especializacion, PROMPT_ESPECIALIZACIONES["general"])
@@ -226,28 +215,23 @@ def consultar_agente(datos: PeticionConsulta): # Modelo actualizado
     system_prompt = "\n".join(system_prompt_parts)
 
     # --- Lógica OpenAI / Búsqueda Web ---
-    texto_respuesta_final = ""
-    # ... (resto de la lógica de OpenAI y búsqueda web igual que antes, usando `system_prompt`) ...
+    texto_respuesta_final = ""; activar_busqueda = forzar_busqueda_web
     try:
         logging.info("Llamada OpenAI 1...")
-        respuesta_inicial = client.chat.completions.create(
-            model="gpt-4-turbo", messages=[{"role": "system", "content": system_prompt},{"role": "user", "content": mensaje_usuario}],
-            temperature=0.5, max_tokens=1500)
+        respuesta_inicial = client.chat.completions.create( model="gpt-4-turbo", messages=[{"role": "system", "content": system_prompt},{"role": "user", "content": mensaje_usuario}], temperature=0.5, max_tokens=1500 )
         texto_respuesta_inicial = respuesta_inicial.choices[0].message.content.strip(); logging.info("Respuesta OpenAI 1 OK.")
-        activar_busqueda = forzar_busqueda_web or any(frase in texto_respuesta_inicial.lower() for frase in FRASES_BUSQUEDA)
+        if not activar_busqueda and any(frase in texto_respuesta_inicial.lower() for frase in FRASES_BUSQUEDA): activar_busqueda = True; logging.info("Activando búsqueda web.")
         if activar_busqueda:
             web_resultados_html = buscar_google(mensaje_usuario)
             if "[Error" not in web_resultados_html:
                  logging.info("Llamada OpenAI 2 con contexto web...")
                  mensaje_con_contexto = f"Consulta: {mensaje_usuario}\nContexto web:\n{web_resultados_html}\n\nResponde consulta integrando contexto."
-                 respuesta_con_contexto = client.chat.completions.create(
-                     model="gpt-4-turbo", messages=[{"role": "system", "content": system_prompt},{"role": "user", "content": mensaje_con_contexto}],
-                     temperature=0.5, max_tokens=1500)
+                 respuesta_con_contexto = client.chat.completions.create( model="gpt-4-turbo", messages=[{"role": "system", "content": system_prompt},{"role": "user", "content": mensaje_con_contexto}], temperature=0.5, max_tokens=1500 )
                  texto_respuesta_final = respuesta_con_contexto.choices[0].message.content.strip(); logging.info("Respuesta OpenAI 2 OK.")
             else: texto_respuesta_final = texto_respuesta_inicial + "\n" + web_resultados_html
         else: texto_respuesta_final = texto_respuesta_inicial
-    except APIError as e: raise HTTPException(status_code=503, detail=f"Error API OpenAI: {e.message}")
-    except Exception as e: logging.error(f"Error /consulta: {e}", exc_info=True); raise HTTPException(status_code=500, detail="Error interno.")
+    except APIError as e: logging.error(f"Error OpenAI /consulta: {e}"); raise HTTPException(status_code=503, detail=f"Error IA: {e.message}")
+    except Exception as e: logging.error(f"Error inesperado /consulta: {e}", exc_info=True); raise HTTPException(status_code=500, detail="Error interno.")
 
     return RespuestaConsulta(respuesta=texto_respuesta_final)
 
@@ -256,7 +240,7 @@ def consultar_agente(datos: PeticionConsulta): # Modelo actualizado
 async def analizar_documento(
     file: UploadFile = File(...),
     especializacion: str = Form("general"),
-    user_id: int | None = Form(None) # <-- AÑADIDO user_id
+    user_id: int | None = Form(None) # <-- Acepta user_id
 ):
     if not client: raise HTTPException(status_code=503, detail="Servicio IA no configurado.")
 
@@ -266,7 +250,6 @@ async def analizar_documento(
     logging.info(f"Análisis: User={current_user_id}, File={filename}, Espec='{especializacion_lower}'")
 
     # --- Obtener Prompt Personalizado ---
-    # (Misma lógica que en /consulta)
     custom_prompt_text = ""
     if current_user_id and DB_CONFIGURED:
         conn = get_db_connection()
@@ -281,7 +264,6 @@ async def analizar_documento(
                         if custom_prompt_text: logging.info(f"Prompt personalizado OK para user: {current_user_id}")
             except pymysql.MySQLError as e: logging.error(f"Error BD get prompt user {current_user_id}: {e}")
             finally: conn.close()
-        else: logging.error(f"No se pudo conectar a BD para prompt.")
 
     # --- Construir Prompt del Sistema Final ---
     prompt_especifico = PROMPT_ESPECIALIZACIONES.get(especializacion_lower, PROMPT_ESPECIALIZACIONES["general"])
@@ -300,7 +282,7 @@ async def analizar_documento(
         if content_type in IMAGE_MIMES:
             logging.info(f"Procesando IMAGEN.")
             image_bytes = await file.read(); base64_image = base64.b64encode(image_bytes).decode('utf-8')
-            user_prompt_image = ("Analiza la imagen, extrae su texto (OCR), y redacta un informe profesional HTML basado en ese texto. " "Sigue las instrucciones de formato HTML (h2, h3, p, ul, li, strong, em) y evita Markdown. " "Devuelve solo el HTML del informe.")
+            user_prompt_image = ("Analiza la imagen, extrae su texto (OCR), y redacta un informe HTML profesional basado en ese texto. Sigue formato HTML y evita Markdown. Devuelve solo el HTML.")
             messages_payload = [ {"role": "system", "content": system_prompt}, {"role": "user", "content": [ {"type": "text", "text": user_prompt_image}, {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{base64_image}"}} ] } ]
 
         # --- Caso PDF/DOCX ---
@@ -308,32 +290,46 @@ async def analizar_documento(
             logging.info(f"Procesando PDF/DOCX.")
             ruta_temporal = os.path.join(TEMP_DIR, f"up_{os.urandom(8).hex()}.{extension}")
             texto_extraido = ""; temp_file_saved = False
+            # ----- INICIO BLOQUE TRY/FINALLY CORREGIDO -----
             try:
-                with open(ruta_temporal, "wb") as buffer: shutil.copyfileobj(file.file, buffer); temp_file_saved = True
+                with open(ruta_temporal, "wb") as buffer:
+                     shutil.copyfileobj(file.file, buffer)
+                     temp_file_saved = True
+                logging.info(f"Archivo guardado temporalmente en: {ruta_temporal}")
                 texto_extraido = extraer_texto_pdf_docx(ruta_temporal, extension)
             finally:
-# --- BLOQUE CORREGIDO ---
-        finally:
-            # Asegurarse de borrar el temporal si se guardó y aún existe
-            if temp_file_saved and os.path.exists(ruta_temporal):
-                try:
-                    os.remove(ruta_temporal)
-                    logging.info(f"Archivo temporal eliminado: {ruta_temporal}")
-                except OSError as e:
-                     logging.error(f"Error al eliminar archivo temporal {ruta_temporal}: {e}")
-# --- FIN BLOQUE CORREGIDO ---            if texto_extraido.startswith("[Error"): raise ValueError(texto_extraido)
-            if not texto_extraido: raise ValueError("No se extrajo texto del PDF/DOCX.")
-            user_prompt_text = (f"Redacta un informe profesional HTML basado en el texto extraído:\n--- INICIO ---\n{texto_extraido}\n--- FIN ---\n" "Sigue formato HTML (h2, h3, p, ul, li, strong, em), evita Markdown. Devuelve solo HTML.")
+                # Bloque finally con indentación corregida
+                if temp_file_saved and os.path.exists(ruta_temporal):
+                    try:
+                        os.remove(ruta_temporal)
+                        logging.info(f"Archivo temporal eliminado: {ruta_temporal}")
+                    except OSError as e:
+                         logging.error(f"Error al eliminar archivo temporal {ruta_temporal}: {e}")
+            # ----- FIN BLOQUE TRY/FINALLY CORREGIDO -----
+
+            # ----- Lógica que va DESPUÉS del finally (con indentación correcta) -----
+            if texto_extraido.startswith("[Error"): raise ValueError(texto_extraido) # Lanzar error si extracción falló
+            if not texto_extraido: raise ValueError("No se extrajo texto del PDF/DOCX.") # Lanzar error si vacío
+
+            logging.info(f"Texto extraído de PDF/DOCX (longitud: {len(texto_extraido)}).")
+            user_prompt_text = (f"Redacta un informe HTML profesional basado en el texto:\n--- INICIO ---\n{texto_extraido}\n--- FIN ---\n Sigue formato HTML, evita Markdown. Devuelve solo HTML.")
             messages_payload = [ {"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt_text} ]
 
         # --- Caso No Soportado ---
         else: raise HTTPException(status_code=415, detail=f"Tipo archivo no soportado: {content_type or extension}.")
 
         # --- Llamada OpenAI ---
-        if not messages_payload: raise HTTPException(status_code=500, detail="Error interno: No se preparó payload IA.")
+        if not messages_payload: raise HTTPException(status_code=500, detail="Error interno: No payload IA.")
         logging.info(f"Llamada a OpenAI...")
         respuesta_informe = client.chat.completions.create( model="gpt-4-turbo", messages=messages_payload, temperature=0.3, max_tokens=2500 )
         informe_html = respuesta_informe.choices[0].message.content.strip(); logging.info(f"Informe generado OK.")
+        if BS4_AVAILABLE: # Limpieza opcional con BeautifulSoup
+            try:
+                 if "<!DOCTYPE html>" in informe_html or "<html" in informe_html:
+                     soup = BeautifulSoup(informe_html, 'html.parser')
+                     body_content = soup.body.decode_contents() if soup.body else informe_html
+                     informe_html = body_content; logging.info("HTML completo detectado, extraído body.")
+            except Exception as e: logging.error(f"Error procesar HTML con BS4: {e}")
         if not informe_html.strip().startswith('<'): informe_html = f"<p>{informe_html}</p>" # Envolver si no es HTML
 
     except APIError as e: logging.error(f"Error API OpenAI /analizar: {e}"); raise HTTPException(status_code=503, detail=f"Error IA: {e.message}")
@@ -345,4 +341,4 @@ async def analizar_documento(
     return RespuestaAnalisis(informe=informe_html)
 
 # --- Punto de Entrada (Opcional) ---
-# if __name__ == "__main__": ...
+# if __name__ == "__main__": import uvicorn; uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
