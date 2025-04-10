@@ -9,3 +9,4 @@ python-multipart
 # pytesseract   <--- Eliminado o comentado
 # Opcional: añadir beautifulsoup4 si quieres la limpieza de HTML extra
 beautifulsoup4
+PyMySQL
