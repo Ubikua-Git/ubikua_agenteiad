@@ -10,3 +10,7 @@ python-multipart
 # Opcional: añadir beautifulsoup4 si quieres la limpieza de HTML extra
 beautifulsoup4
 PyMySQL
+requests        # Necesario para llamar a serve_file.php
+psycopg2-binary # Necesario para conectar a PostgreSQL
+PyPDF2          # Necesario para extraer texto de PDF (en main.py)
+python-docx     # Necesario para extraer texto de DOCX (en main.py)
