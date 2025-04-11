@@ -6,11 +6,8 @@ PyPDF2
 python-docx
 Pillow
 python-multipart
-# pytesseract   <--- Eliminado o comentado
-# Opcional: añadir beautifulsoup4 si quieres la limpieza de HTML extra
-beautifulsoup4
-# PyMySQL # <-- ELIMINADO o comentado
-requests        # Necesario para llamar a serve_file.php
-psycopg2-binary # Necesario para conectar a PostgreSQL
-PyPDF2          # Necesario para extraer texto de PDF (en main.py)
-python-docx     # Necesario para extraer texto de DOCX (en main.py)
+# pytesseract # Comentado está bien
+beautifulsoup4 # Opcional para limpieza HTML
+# PyMySQL # Comentado está bien
+psycopg2-binary # Para PostgreSQL
+chardet # Para detectar encoding
