@@ -1,3 +1,4 @@
+# --- INICIO main.py v2.3.6 (Integrado /analizar-documento) ---
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -23,7 +24,7 @@ except ImportError:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-app = FastAPI(title="Asistente IA Ashotel API v2.3.5 (FTS + Correcciones)", version="2.3.5")
+app = FastAPI(title="Asistente IA Ashotel API v2.3.6 (Integrado)", version="2.3.6")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -38,25 +39,24 @@ try:
     assert openai_api_key, "Var OPENAI_API_KEY no encontrada."
     client = OpenAI(api_key=openai_api_key)
     logging.info("Cliente OpenAI OK.")
-    
+
     GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
     GOOGLE_CX = os.getenv("GOOGLE_CX")
     if not GOOGLE_API_KEY or not GOOGLE_CX:
         logging.warning("Google API Keys no encontradas.")
-    
+
     DB_HOST = os.getenv("DB_HOST")
     DB_USER = os.getenv("DB_USER")
     DB_PASS = os.getenv("DB_PASS")
     DB_NAME = os.getenv("DB_NAME")
     DB_PORT = int(os.getenv("DB_PORT", 5432))
-    
     if not all([DB_HOST, DB_USER, DB_PASS, DB_NAME]):
         logging.warning("Faltan variables DB.")
         DB_CONFIGURED = False
     else:
         DB_CONFIGURED = True
         logging.info("Credenciales BD PostgreSQL OK.")
-    
+
     PHP_FILE_SERVE_URL = os.getenv("PHP_FILE_SERVE_URL")
     PHP_API_SECRET_KEY = os.getenv("PHP_API_SECRET_KEY")
     if not PHP_FILE_SERVE_URL or not PHP_API_SECRET_KEY:
@@ -65,7 +65,7 @@ try:
     else:
         PHP_BRIDGE_CONFIGURED = True
         logging.info("Config PHP Bridge OK.")
-        
+
 except Exception as e:
     logging.error(f"Error Configuración Crítica: {e}", exc_info=True)
     client = None
@@ -182,9 +182,39 @@ def extraer_texto_simple(ruta_archivo: str) -> str:
         logging.error(f"Error extraer texto simple {ruta_archivo}: {e}")
         return "[Error interno procesando texto plano.]"
 
-# --- Endpoints de la API ---
+def buscar_google(query: str) -> str:
+    if not GOOGLE_API_KEY or not GOOGLE_CX:
+        return "<p><i>[Búsqueda web no disponible.]</i></p>"
+    url = "https://www.googleapis.com/customsearch/v1"
+    params = {"key": GOOGLE_API_KEY, "cx": GOOGLE_CX, "q": query, "num": 3}
+    logging.info(f"Buscando en Google: '{query}'")
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        resultados = data.get("items", [])
+        if not resultados:
+            return "<p><i>[No se encontraron resultados web.]</i></p>"
+        texto_resultados = "<div class='google-results'><h4 style='font-size:0.9em;color:#555;'>Resultados web:</h4>"
+        for item in resultados:
+            title = item.get('title','')
+            link = item.get('link','#')
+            snippet = item.get('snippet','').replace('\n',' ')
+            texto_resultados += f"<div><a href='{link}' target='_blank'>{title}</a><p>{snippet}</p><cite>{link}</cite></div>\n"
+        texto_resultados += "</div>"
+        logging.info(f"Búsqueda web OK: {len(resultados)} resultados.")
+        return texto_resultados
+    except requests.exceptions.Timeout:
+        logging.error("Timeout búsqueda web.")
+        return "<p><i>[Error: Timeout búsqueda web.]</i></p>"
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error búsqueda web: {e}")
+        return "<p><i>[Error conexión búsqueda web.]</i></p>"
+    except Exception as e:
+        logging.error(f"Error inesperado búsqueda web: {e}")
+        return "<p><i>[Error inesperado búsqueda web.]</i></p>"
 
-# Endpoint para procesar texto de documentos subidos
+# --- Endpoint para procesar texto de documentos subidos (/process-document) ---
 @app.post("/process-document", response_model=ProcessResponse)
 async def process_document_text(request: ProcessRequest):
     doc_id = request.doc_id
@@ -228,7 +258,6 @@ async def process_document_text(request: ProcessRequest):
                 with os.fdopen(fd, 'wb') as temp_file:
                     for chunk in response.iter_content(chunk_size=8192):
                         temp_file.write(chunk)
-                # Seleccionar función de extracción
                 if file_ext in ['pdf', 'doc', 'docx']:
                     extracted_text = extraer_texto_pdf_docx(temp_path, file_ext)
                 elif file_ext in ['txt', 'csv']:
@@ -243,7 +272,6 @@ async def process_document_text(request: ProcessRequest):
         else:
             extracted_text = "[Extracción no soportada para este tipo de archivo]"
 
-        # 4. Actualizar Base de Datos (Trigger actualizará fts_vector)
         if extracted_text is None:
             raise ValueError("Fallo la extracción de texto.")
         logging.info(f"Actualizando BD doc ID {doc_id} con texto (longitud: {len(extracted_text)})...")
@@ -274,7 +302,7 @@ async def process_document_text(request: ProcessRequest):
         if conn and not conn.closed:
             conn.close()
 
-# --- Endpoint de consulta ---
+# --- Endpoint de consulta (/consulta) ---
 @app.post("/consulta", response_model=RespuestaConsulta)
 def consultar_agente(datos: PeticionConsulta):
     if not client:
@@ -296,7 +324,7 @@ def consultar_agente(datos: PeticionConsulta):
                     result = cursor.fetchone()
                     if result and result.get('custom_prompt'):
                         custom_prompt_text = result['custom_prompt'].strip()
-            except (Exception, psycopg2.Error) as e:
+            except Exception as e:
                 logging.error(f"Error BD get prompt user {current_user_id}: {e}")
             finally:
                 if conn_prompt:
@@ -306,7 +334,6 @@ def consultar_agente(datos: PeticionConsulta):
     if current_user_id and DB_CONFIGURED:
         conn_docs = get_db_connection()
         if conn_docs:
-            relevant_docs_texts = []
             try:
                 with conn_docs.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
                     search_query = mensaje_usuario
@@ -323,7 +350,6 @@ def consultar_agente(datos: PeticionConsulta):
                     """
                     cursor.execute(sql_fts, (search_query, current_user_id, search_query))
                     relevant_docs = cursor.fetchall()
-
                     if relevant_docs:
                         context_parts = ["\n\n### Contexto Relevante de Documentos del Usuario ###"]
                         current_token_count = 0
@@ -333,27 +359,36 @@ def consultar_agente(datos: PeticionConsulta):
                             doc_tokens = len(text.split()) * 1.3
                             if current_token_count + doc_tokens < 3500:
                                 context_parts.append(f"\n--- Documento: {filename} ---")
-                                context_parts.append(text[:3500 - current_token_count])  # Limitar a 3500 tokens
+                                # Se incluye hasta el límite restante
+                                available_chars = int((3500 - current_token_count) / 1.3)
+                                context_parts.append(text[:available_chars])
                                 current_token_count += doc_tokens
                         document_context = "\n".join(context_parts)
-            except (Exception, psycopg2.Error) as e:
+            except Exception as e:
                 logging.error(f"Error BD FTS user {current_user_id}: {e}")
             finally:
                 if conn_docs:
                     conn_docs.close()
 
-    system_prompt = "\n".join([BASE_PROMPT_CONSULTA, PROMPT_ESPECIALIZACIONES.get(especializacion, PROMPT_ESPECIALIZACIONES["general"]), custom_prompt_text, document_context])
+    system_prompt = "\n".join([
+        BASE_PROMPT_CONSULTA,
+        PROMPT_ESPECIALIZACIONES.get(especializacion, PROMPT_ESPECIALIZACIONES["general"]),
+        custom_prompt_text,
+        document_context
+    ])
     logging.debug(f"Prompt para OpenAI: {system_prompt[:500]}")
 
     try:
-        logging.info("Llamada OpenAI...")
+        logging.info("Llamada OpenAI para consulta...")
         respuesta_inicial = client.chat.completions.create(
             model="gpt-4-turbo",
-            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": mensaje_usuario}],
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": mensaje_usuario}
+            ],
             temperature=0.5,
             max_tokens=1500
         )
-
         texto_respuesta_final = respuesta_inicial.choices[0].message.content.strip()
 
         if any(frase in texto_respuesta_final.lower() for frase in FRASES_BUSQUEDA) and forzar_busqueda_web:
@@ -368,3 +403,122 @@ def consultar_agente(datos: PeticionConsulta):
         raise HTTPException(status_code=500, detail="Error interno.")
 
     return RespuestaConsulta(respuesta=texto_respuesta_final)
+
+# --- Endpoint para analizar documentos (/analizar-documento) ---
+@app.post("/analizar-documento", response_model=RespuestaAnalisis)
+async def analizar_documento(
+    file: UploadFile = File(...),
+    especializacion: str = Form("general"),
+    user_id: int | None = Form(None)
+):
+    if not client:
+        raise HTTPException(status_code=503, detail="Servicio IA no configurado.")
+
+    filename = file.filename or "unknown"
+    content_type = file.content_type or ""
+    extension = filename.split('.')[-1].lower() if '.' in filename else ''
+    current_user_id = user_id
+    especializacion_lower = especializacion.lower()
+    logging.info(f"Análisis: User={current_user_id}, File={filename}, Espec='{especializacion_lower}'")
+
+    custom_prompt_text = ""
+    if current_user_id and DB_CONFIGURED:
+        conn = get_db_connection()
+        if conn:
+            try:
+                with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
+                    cursor.execute("SELECT custom_prompt FROM user_settings WHERE user_id = %s", (current_user_id,))
+                    result = cursor.fetchone()
+                    if result and result.get('custom_prompt'):
+                        custom_prompt_text = result['custom_prompt'].strip()
+            except Exception as e:
+                logging.error(f"Error BD get prompt user {current_user_id}: {e}")
+            finally:
+                if conn:
+                    conn.close()
+
+    prompt_especifico = PROMPT_ESPECIALIZACIONES.get(especializacion_lower, PROMPT_ESPECIALIZACIONES["general"])
+    system_prompt = "\n".join([BASE_PROMPT_ANALISIS_DOC, prompt_especifico])
+    if custom_prompt_text:
+        system_prompt += "\n\n### Instrucciones Adicionales Usuario ###\n" + custom_prompt_text
+
+    messages_payload = []
+    IMAGE_MIMES = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"]
+
+    if content_type in IMAGE_MIMES:
+        logging.info("Procesando imagen subida para análisis.")
+        image_bytes = await file.read()
+        base64_image = base64.b64encode(image_bytes).decode('utf-8')
+        user_prompt = "Analiza la imagen y extrae su contenido en un informe HTML profesional."
+        messages_payload = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+            {"role": "assistant", "content": f"data:{content_type};base64,{base64_image}"}
+        ]
+    elif extension in ["pdf", "doc", "docx", "txt", "csv"]:
+        logging.info(f"Procesando archivo {extension.upper()} para análisis.")
+        temp_filename = os.path.join(TEMP_DIR, f"up_analisis_{os.urandom(8).hex()}.{extension}")
+        texto_extraido = ""
+        saved = False
+        try:
+            with open(temp_filename, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            saved = True
+            if extension in ['pdf', 'doc', 'docx']:
+                texto_extraido = extraer_texto_pdf_docx(temp_filename, extension)
+            else:
+                texto_extraido = extraer_texto_simple(temp_filename)
+        finally:
+            if saved and os.path.exists(temp_filename):
+                try:
+                    os.remove(temp_filename)
+                    logging.info(f"Archivo temporal de análisis eliminado: {temp_filename}")
+                except OSError as e:
+                    logging.error(f"Error eliminando archivo temporal {temp_filename}: {e}")
+        if texto_extraido.startswith("[Error"):
+            raise HTTPException(status_code=400, detail=texto_extraido)
+        if not texto_extraido:
+            raise HTTPException(status_code=400, detail=f"No se extrajo texto del archivo {extension.upper()}.")
+        user_prompt = f"Redacta un informe HTML profesional basado en el siguiente texto:\n--- INICIO ---\n{texto_extraido}\n--- FIN ---"
+        messages_payload = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+    else:
+        raise HTTPException(status_code=415, detail=f"Tipo archivo no soportado: {content_type or extension}.")
+
+    try:
+        logging.info("Llamada a OpenAI para análisis de documento...")
+        respuesta_informe = client.chat.completions.create(
+            model="gpt-4-turbo",
+            messages=messages_payload,
+            temperature=0.3,
+            max_tokens=2500
+        )
+        informe_html = respuesta_informe.choices[0].message.content.strip()
+        if BS4_AVAILABLE:
+            try:
+                if "<!DOCTYPE html>" in informe_html or "<html" in informe_html:
+                    soup = BeautifulSoup(informe_html, 'html.parser')
+                    informe_html = soup.body.decode_contents() if soup.body else informe_html
+                    logging.info("HTML completo detectado, extraído body.")
+            except Exception as e:
+                logging.error(f"Error procesar HTML con BS4: {e}")
+        if not informe_html.strip().startswith('<'):
+            informe_html = f"<p>{informe_html}</p>"
+    except APIError as e:
+        logging.error(f"Error API OpenAI /analizar: {e}")
+        raise HTTPException(status_code=503, detail=f"Error IA: {e.message}")
+    except Exception as e:
+        logging.error(f"Error inesperado /analizar: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error interno servidor.")
+    finally:
+        await file.close()
+
+    return RespuestaAnalisis(informe=informe_html)
+
+# --- Punto de Entrada (Opcional) ---
+# if __name__ == "__main__":
+#     import uvicorn
+#     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+# --- FIN main.py v2.3.6 ---
