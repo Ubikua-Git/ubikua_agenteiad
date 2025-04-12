@@ -1,4 +1,4 @@
-# --- INICIO main.py v2.3.6 (Integrado /analizar-documento) ---
+# --- INICIO main.py v2.3.7 (Integrado /analizar-documento) ---
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -25,7 +25,7 @@ except ImportError:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-app = FastAPI(title="Asistente IA Ashotel API v2.3.6 (Integrado)", version="2.3.6")
+app = FastAPI(title="Asistente IA Ashotel API v2.3.7 (Integrado)", version="2.3.7")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -286,7 +286,6 @@ async def process_document_text(request: ProcessRequest):
                 with os.fdopen(fd, 'wb') as temp_file:
                     for chunk in response.iter_content(chunk_size=8192):
                         temp_file.write(chunk)
-                # Log: calcular hash y longitud del archivo temporal
                 with open(temp_path, 'rb') as f:
                     file_data = f.read()
                     file_hash = hashlib.sha256(file_data).hexdigest()
@@ -310,7 +309,7 @@ async def process_document_text(request: ProcessRequest):
             raise ValueError("Fallo la extracción de texto.")
         logging.info(f"Actualizando BD doc ID {doc_id} con texto (longitud: {len(extracted_text)} caracteres)...")
         with conn.cursor() as cursor:
-            sql_update = "UPDATE user_documents SET extracted_text = %s WHERE id = %s AND user_id = %s"
+            sql_update = "UPDATE user_documents SET extracted_text = %s, procesado = TRUE WHERE id = %s AND user_id = %s"
             cursor.execute(sql_update, (extracted_text, doc_id, current_user_id))
             if cursor.rowcount == 0:
                 logging.warning(f"UPDATE texto no afectó filas para doc {doc_id}")
@@ -449,7 +448,7 @@ async def analizar_documento(
     content_type = file.content_type or ""
     extension = filename.split('.')[-1].lower() if '.' in filename else ''
     current_user_id = user_id
-    especializacion_lower = especializacion.lower()
+    especializacion_lower = especialificacion.lower()
     logging.info(f"Análisis: User={current_user_id}, File={filename}, Espec='{especialacion_lower}'")
 
     custom_prompt_text = ""
@@ -517,7 +516,6 @@ async def analizar_documento(
         ]
     else:
         raise HTTPException(status_code=415, detail=f"Tipo archivo no soportado: {content_type or extension}.")
-
     try:
         logging.info("Llamada a OpenAI para análisis de documento...")
         respuesta_informe = client.chat.completions.create(
@@ -545,7 +543,6 @@ async def analizar_documento(
         raise HTTPException(status_code=500, detail="Error interno servidor.")
     finally:
         await file.close()
-
     return RespuestaAnalisis(informe=informe_html)
 
 # --- Punto de Entrada (Opcional) ---
