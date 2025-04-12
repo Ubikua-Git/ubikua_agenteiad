@@ -344,7 +344,7 @@ def consultar_agente(datos: PeticionConsulta):
     mensaje_usuario = datos.mensaje
     forzar_busqueda_web = datos.buscar_web
     current_user_id = datos.user_id
-    logging.info(f"Consulta: User={current_user_id}, Espec='{especializacion}', Web={forzar_busqueda_web}")
+    logging.info(f"Consulta: User={current_user_id}, Espec='{especialacion}', Web={forzar_busqueda_web}")
 
     custom_prompt_text = ""
     if current_user_id and DB_CONFIGURED:
@@ -449,7 +449,7 @@ async def analizar_documento(
     extension = filename.split('.')[-1].lower() if '.' in filename else ''
     current_user_id = user_id
     especializacion_lower = especializacion.lower()
-    logging.info(f"Análisis: User={current_user_id}, File={filename}, Espec='{especializacion_lower}'")
+    logging.info(f"Análisis: User={current_user_id}, File={filename}, Espec='{especialacion_lower}'")
 
     custom_prompt_text = ""
     if current_user_id and DB_CONFIGURED:
