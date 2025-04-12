@@ -261,18 +261,26 @@ async def process_document_text(request: ProcessRequest):
             file_type = doc_info['file_type']
             stored_path = doc_info['stored_path']
 
-        # 2. Obtener contenido del archivo via PHP Bridge
+        # 2. Construir URL para PHP Bridge y obtener el contenido del archivo
         serve_url = f"{PHP_FILE_SERVE_URL}?doc_id={doc_id}&user_id={current_user_id}&api_key={PHP_API_SECRET_KEY}"
-        logging.info(f"Solicitando doc ID {doc_id} a PHP...")
+        logging.info(f"Solicitando doc ID {doc_id} a PHP. URL: {serve_url}")
         response = requests.get(serve_url, timeout=30, stream=True)
         response.raise_for_status()
+        # Log temporal: mostrar los primeros 200 caracteres de la respuesta
+        try:
+            content_snippet = response.content[:200]
+            snippet_decoded = content_snippet.decode('utf-8', 'ignore')
+        except Exception as log_exc:
+            snippet_decoded = "[Error decodificando contenido]"
+            logging.error(f"Error decodificando snippet: {log_exc}")
+        logging.info(f"Contenido recibido del PHP Bridge (primeros 200 caracteres): {snippet_decoded}")
 
-        # 3. Guardar temporalmente y extraer texto
+        # 3. Guardar temporalmente el contenido y extraer texto
         file_ext = os.path.splitext(original_fname)[1].lower().strip('.')
         extracted_text = None
         if file_ext in ['pdf', 'doc', 'docx', 'txt', 'csv']:
             fd, temp_path = tempfile.mkstemp(suffix=f'.{file_ext}', dir=TEMP_DIR)
-            logging.info(f"Guardando en temp: {temp_path}")
+            logging.info(f"Guardando contenido en archivo temporal: {temp_path}")
             try:
                 with os.fdopen(fd, 'wb') as temp_file:
                     for chunk in response.iter_content(chunk_size=8192):
@@ -285,9 +293,9 @@ async def process_document_text(request: ProcessRequest):
                 if temp_path and os.path.exists(temp_path):
                     try:
                         os.remove(temp_path)
-                        logging.info(f"Temp file {temp_path} eliminado tras extracción.")
+                        logging.info(f"Archivo temporal {temp_path} eliminado tras extracción.")
                     except OSError as e:
-                        logging.error(f"Error borrar temp {temp_path}: {e}")
+                        logging.error(f"Error al borrar archivo temporal {temp_path}: {e}")
         else:
             extracted_text = "[Extracción no soportada para este tipo de archivo]"
 
@@ -298,16 +306,15 @@ async def process_document_text(request: ProcessRequest):
             sql_update = "UPDATE user_documents SET extracted_text = %s WHERE id = %s AND user_id = %s"
             cursor.execute(sql_update, (extracted_text, doc_id, current_user_id))
             if cursor.rowcount == 0:
-                logging.warning(f"UPDATE texto no afectó filas doc {doc_id}")
+                logging.warning(f"UPDATE texto no afectó filas para doc {doc_id}")
         conn.commit()
         logging.info(f"BD actualizada doc ID {doc_id}.")
         return ProcessResponse(success=True, message="Documento procesado.")
-
     except AssertionError as e:
         logging.error(f"Assertion error procesando doc {doc_id}: {e}")
         return ProcessResponse(success=False, error=str(e))
     except requests.exceptions.RequestException as e:
-        logging.error(f"Error solicitar PHP doc {doc_id}: {e}")
+        logging.error(f"Error solicitando PHP doc {doc_id}: {e}")
         return ProcessResponse(success=False, error=f"Error conexión PHP: {e}")
     except (Exception, psycopg2.Error) as e:
         logging.error(f"Error procesando doc {doc_id}: {e}", exc_info=True)
@@ -378,7 +385,6 @@ def consultar_agente(datos: PeticionConsulta):
                             doc_tokens = len(text.split()) * 1.3
                             if current_token_count + doc_tokens < 3500:
                                 context_parts.append(f"\n--- Documento: {filename} ---")
-                                # Se incluye hasta el límite restante
                                 available_chars = int((3500 - current_token_count) / 1.3)
                                 context_parts.append(text[:available_chars])
                                 current_token_count += doc_tokens
@@ -420,7 +426,6 @@ def consultar_agente(datos: PeticionConsulta):
     except Exception as e:
         logging.error(f"Error inesperado /consulta: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Error interno.")
-
     return RespuestaConsulta(respuesta=texto_respuesta_final)
 
 # --- Endpoint para analizar documentos (/analizar-documento) ---
@@ -437,8 +442,8 @@ async def analizar_documento(
     content_type = file.content_type or ""
     extension = filename.split('.')[-1].lower() if '.' in filename else ''
     current_user_id = user_id
-    especializacion_lower = especializacion.lower()
-    logging.info(f"Análisis: User={current_user_id}, File={filename}, Espec='{especializacion_lower}'")
+    especializacion_lower = especialificacion.lower()
+    logging.info(f"Análisis: User={current_user_id}, File={filename}, Espec='{especialificacion_lower}'")
 
     custom_prompt_text = ""
     if current_user_id and DB_CONFIGURED:
@@ -456,7 +461,7 @@ async def analizar_documento(
                 if conn:
                     conn.close()
 
-    prompt_especifico = PROMPT_ESPECIALIZACIONES.get(especializacion_lower, PROMPT_ESPECIALIZACIONES["general"])
+    prompt_especifico = PROMPT_ESPECIALIZACIONES.get(especialificacion_lower, PROMPT_ESPECIALIZACIONES["general"])
     system_prompt = "\n".join([BASE_PROMPT_ANALISIS_DOC, prompt_especifico])
     if custom_prompt_text:
         system_prompt += "\n\n### Instrucciones Adicionales Usuario ###\n" + custom_prompt_text
