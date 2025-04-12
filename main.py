@@ -376,7 +376,7 @@ def consultar_agente(datos: PeticionConsulta):
                         WHERE user_id = %s
                           AND is_active_for_ai = TRUE
                           AND fts_vector @@ plainto_tsquery('spanish', %s)
-                          AND extracted_text IS NOT NULL AND extracted_text != '' AND NOT extracted_text LIKE '[Error%'
+                          AND extracted_text IS NOT NULL AND extracted_text != '' AND NOT extracted_text LIKE '[Error%%'
                         ORDER BY relevance DESC
                         LIMIT 3
                     """
