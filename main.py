@@ -13,6 +13,7 @@ import psycopg2.extras
 import tempfile
 import re
 import chardet
+import hashlib
 from PyPDF2 import PdfReader, errors as pdf_errors
 from docx import Document
 from docx.opc.exceptions import PackageNotFoundError
@@ -169,11 +170,11 @@ def extraer_texto_pdf_docx(ruta_archivo: str, extension: str) -> str:
             texto = "\n".join([p.text for p in doc.paragraphs if p.text])
         else:
             return "[Error interno: Tipo no esperado en extraer_texto_pdf_docx]"
-        logging.info(f"Texto extraído PDF/DOCX OK (longitud: {len(texto)}).")
+        logging.info(f"Texto extraído PDF/DOCX OK (longitud: {len(texto)} caracteres).")
         return texto.strip()
     except pdf_errors.PdfReadError as e:
         logging.error(f"Error leer PDF {ruta_archivo}: {e}")
-        return f"[Error PDF: No se pudo leer]"
+        return "[Error PDF: No se pudo leer]"
     except PackageNotFoundError:
         logging.error(f"Error DOCX {ruta_archivo}: No válido.")
         return "[Error DOCX: Archivo inválido]"
@@ -189,10 +190,11 @@ def extraer_texto_simple(ruta_archivo: str) -> str:
     try:
         with open(ruta_archivo, 'rb') as fb:
             raw_data = fb.read()
+            logging.info(f"Longitud de datos leídos: {len(raw_data)} bytes")
             detected_encoding = chardet.detect(raw_data)['encoding'] or 'utf-8'
         with open(ruta_archivo, 'r', encoding=detected_encoding, errors='ignore') as f:
             texto = f.read()
-        logging.info(f"Texto extraído simple OK (longitud: {len(texto)}).")
+        logging.info(f"Texto extraído simple OK (longitud: {len(texto)} caracteres).")
         return texto.strip()
     except FileNotFoundError:
         logging.error(f"Error interno: {ruta_archivo} no encontrado para simple.")
@@ -266,7 +268,6 @@ async def process_document_text(request: ProcessRequest):
         logging.info(f"Solicitando doc ID {doc_id} a PHP. URL: {serve_url}")
         response = requests.get(serve_url, timeout=30, stream=True)
         response.raise_for_status()
-        # Log temporal: mostrar los primeros 200 caracteres de la respuesta
         try:
             content_snippet = response.content[:200]
             snippet_decoded = content_snippet.decode('utf-8', 'ignore')
@@ -285,6 +286,12 @@ async def process_document_text(request: ProcessRequest):
                 with os.fdopen(fd, 'wb') as temp_file:
                     for chunk in response.iter_content(chunk_size=8192):
                         temp_file.write(chunk)
+                # Log: calcular hash y longitud del archivo temporal
+                with open(temp_path, 'rb') as f:
+                    file_data = f.read()
+                    file_hash = hashlib.sha256(file_data).hexdigest()
+                logging.info(f"Archivo temporal guardado (longitud: {len(file_data)} bytes, hash: {file_hash})")
+                
                 if file_ext in ['pdf', 'doc', 'docx']:
                     extracted_text = extraer_texto_pdf_docx(temp_path, file_ext)
                 elif file_ext in ['txt', 'csv']:
@@ -301,7 +308,7 @@ async def process_document_text(request: ProcessRequest):
 
         if extracted_text is None:
             raise ValueError("Fallo la extracción de texto.")
-        logging.info(f"Actualizando BD doc ID {doc_id} con texto (longitud: {len(extracted_text)})...")
+        logging.info(f"Actualizando BD doc ID {doc_id} con texto (longitud: {len(extracted_text)} caracteres)...")
         with conn.cursor() as cursor:
             sql_update = "UPDATE user_documents SET extracted_text = %s WHERE id = %s AND user_id = %s"
             cursor.execute(sql_update, (extracted_text, doc_id, current_user_id))
@@ -442,8 +449,8 @@ async def analizar_documento(
     content_type = file.content_type or ""
     extension = filename.split('.')[-1].lower() if '.' in filename else ''
     current_user_id = user_id
-    especializacion_lower = especialificacion.lower()
-    logging.info(f"Análisis: User={current_user_id}, File={filename}, Espec='{especialificacion_lower}'")
+    especializacion_lower = especializacion.lower()
+    logging.info(f"Análisis: User={current_user_id}, File={filename}, Espec='{especialacion_lower}'")
 
     custom_prompt_text = ""
     if current_user_id and DB_CONFIGURED:
@@ -461,7 +468,7 @@ async def analizar_documento(
                 if conn:
                     conn.close()
 
-    prompt_especifico = PROMPT_ESPECIALIZACIONES.get(especialificacion_lower, PROMPT_ESPECIALIZACIONES["general"])
+    prompt_especifico = PROMPT_ESPECIALIZACIONES.get(especialacion_lower, PROMPT_ESPECIALIZACIONES["general"])
     system_prompt = "\n".join([BASE_PROMPT_ANALISIS_DOC, prompt_especifico])
     if custom_prompt_text:
         system_prompt += "\n\n### Instrucciones Adicionales Usuario ###\n" + custom_prompt_text
@@ -545,4 +552,4 @@ async def analizar_documento(
 # if __name__ == "__main__":
 #     import uvicorn
 #     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
-# --- FIN main.py v2.3.6 ---
+# --- FIN main.py v2.3.7 ---
