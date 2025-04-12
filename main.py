@@ -448,8 +448,8 @@ async def analizar_documento(
     content_type = file.content_type or ""
     extension = filename.split('.')[-1].lower() if '.' in filename else ''
     current_user_id = user_id
-    especializacion_lower = especialificacion.lower()
-    logging.info(f"Análisis: User={current_user_id}, File={filename}, Espec='{especialacion_lower}'")
+    especializacion_lower = especializacion.lower()
+    logging.info(f"Análisis: User={current_user_id}, File={filename}, Espec='{especializacion_lower}'")
 
     custom_prompt_text = ""
     if current_user_id and DB_CONFIGURED:
@@ -467,7 +467,7 @@ async def analizar_documento(
                 if conn:
                     conn.close()
 
-    prompt_especifico = PROMPT_ESPECIALIZACIONES.get(especialacion_lower, PROMPT_ESPECIALIZACIONES["general"])
+    prompt_especifico = PROMPT_ESPECIALIZACIONES.get(especializacion_lower, PROMPT_ESPECIALIZACIONES["general"])
     system_prompt = "\n".join([BASE_PROMPT_ANALISIS_DOC, prompt_especifico])
     if custom_prompt_text:
         system_prompt += "\n\n### Instrucciones Adicionales Usuario ###\n" + custom_prompt_text
@@ -516,6 +516,7 @@ async def analizar_documento(
         ]
     else:
         raise HTTPException(status_code=415, detail=f"Tipo archivo no soportado: {content_type or extension}.")
+
     try:
         logging.info("Llamada a OpenAI para análisis de documento...")
         respuesta_informe = client.chat.completions.create(
@@ -543,6 +544,7 @@ async def analizar_documento(
         raise HTTPException(status_code=500, detail="Error interno servidor.")
     finally:
         await file.close()
+
     return RespuestaAnalisis(informe=informe_html)
 
 # --- Punto de Entrada (Opcional) ---
