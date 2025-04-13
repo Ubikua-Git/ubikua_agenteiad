@@ -1,4 +1,4 @@
-# --- INICIO main.py v2.3.7-mt (Manejo Básico Tenant ID) ---
+# --- INICIO main.py v2.3.7-mt (Manejo Básico Tenant ID y depuración en el procesamiento de documentos) ---
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -8,11 +8,11 @@ import shutil
 import requests
 import base64
 import logging
-import psycopg2 # Driver PostgreSQL
-import psycopg2.extras # Para DictCursor
+import psycopg2  # Driver PostgreSQL
+import psycopg2.extras  # Para DictCursor
 import tempfile
 import re
-import chardet # Necesario para extraer_texto_simple
+import chardet  # Necesario para extraer_texto_simple
 import hashlib
 from PyPDF2 import PdfReader, errors as pdf_errors
 from docx import Document
@@ -35,7 +35,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Configuración (Exactamente como en tu v2.3.7) ---
+# --- Configuración (Exactamente como en la versión anterior) ---
 try:
     openai_api_key = os.getenv("OPENAI_API_KEY")
     assert openai_api_key, "Var OPENAI_API_KEY no encontrada."
@@ -44,7 +44,8 @@ try:
 
     GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
     GOOGLE_CX = os.getenv("GOOGLE_CX")
-    if not GOOGLE_API_KEY or not GOOGLE_CX: logging.warning("Google API Keys no encontradas.")
+    if not GOOGLE_API_KEY or not GOOGLE_CX:
+        logging.warning("Google API Keys no encontradas.")
 
     DB_HOST = os.getenv("DB_HOST")
     DB_USER = os.getenv("DB_USER")
@@ -69,7 +70,9 @@ try:
 
 except Exception as e:
     logging.error(f"Error Configuración Crítica: {e}", exc_info=True)
-    client = None; DB_CONFIGURED = False; PHP_BRIDGE_CONFIGURED = False
+    client = None
+    DB_CONFIGURED = False
+    PHP_BRIDGE_CONFIGURED = False
 
 # --- Modelos Pydantic (MODIFICADOS) ---
 class PeticionConsulta(BaseModel):
@@ -77,7 +80,7 @@ class PeticionConsulta(BaseModel):
     especializacion: str = "general"
     buscar_web: bool = False
     user_id: int | None = None
-    tenant_id: int | None = None # <-- AÑADIDO
+    tenant_id: int | None = None  # Se agrega para multiempresa
 
 class RespuestaConsulta(BaseModel):
     respuesta: str
@@ -85,17 +88,17 @@ class RespuestaConsulta(BaseModel):
 class RespuestaAnalisis(BaseModel):
     informe: str
 
-class ProcessRequest(BaseModel): # Modelo para /process-document
+class ProcessRequest(BaseModel):  # Modelo para /process-document
     doc_id: int
     user_id: int
-    tenant_id: int | None = None # <-- AÑADIDO
+    tenant_id: int | None = None  # Se agrega para multiempresa
 
 class ProcessResponse(BaseModel):
     success: bool
     message: str | None = None
     error: str | None = None
 
-# --- Prompts (Exactamente como en tu v2.3.7) ---
+# --- Prompts (Sin cambios respecto a la versión anterior) ---
 BASE_PROMPT_CONSULTA = (
     "Eres el Asistente IA oficial de Ashotel, un experto multidisciplinar que responde de manera "
     "clara, precisa y estéticamente impecable. Tus respuestas deben estar redactadas en HTML válido, "
@@ -130,15 +133,23 @@ PROMPT_ESPECIALIZACIONES = {
 }
 FRASES_BUSQUEDA = ["no tengo información", "no dispongo de información", "no tengo acceso", "no sé"]
 
-# --- Temp Dir ---
+# --- Temp Dir para documentos ---
 TEMP_DIR = "/tmp/uploads_ashotel"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# --- Funciones Auxiliares (Exactamente como en tu v2.3.7) ---
-def get_db_connection(): # Usa psycopg2 como en tu original
-    if not DB_CONFIGURED: logging.error("BD Config incompleta."); return None
-    try: return psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASS, port=DB_PORT, connect_timeout=5)
-    except (Exception, psycopg2.Error) as error: logging.error(f"Error conectar PGSQL: {error}"); return None
+# --- Funciones Auxiliares ---
+def get_db_connection():
+    if not DB_CONFIGURED:
+        logging.error("BD Config incompleta.")
+        return None
+    try:
+        return psycopg2.connect(
+            host=DB_HOST, database=DB_NAME, user=DB_USER,
+            password=DB_PASS, port=DB_PORT, connect_timeout=5
+        )
+    except (Exception, psycopg2.Error) as error:
+        logging.error(f"Error conectar PGSQL: {error}")
+        return None
 
 def extraer_texto_pdf_docx(ruta_archivo: str, extension: str) -> str:
     texto = ""
@@ -225,10 +236,10 @@ def buscar_google(query: str) -> str:
 
 # --- Endpoint /process-document (MODIFICADO para usar tenant_id en queries) ---
 @app.post("/process-document", response_model=ProcessResponse)
-async def process_document_text(request: ProcessRequest):  # Modelo ahora incluye tenant_id
+async def process_document_text(request: ProcessRequest):
     doc_id = request.doc_id
     current_user_id = request.user_id
-    current_tenant_id = request.tenant_id  # <-- OBTENIDO tenant_id
+    current_tenant_id = request.tenant_id  # OBTENIDO tenant_id
 
     # Validar que tenemos los IDs necesarios
     if not current_user_id or not current_tenant_id:
@@ -258,7 +269,7 @@ async def process_document_text(request: ProcessRequest):  # Modelo ahora incluy
             file_type = doc_info['file_type']
             stored_path = doc_info['stored_path']
 
-        # 2. Obtener contenido vía PHP Bridge (se añade tenant_id en la URL)
+        # 2. Obtener contenido vía PHP Bridge (incluir tenant_id en la URL)
         serve_url = f"{PHP_FILE_SERVE_URL}?doc_id={doc_id}&user_id={current_user_id}&tenant_id={current_tenant_id}&api_key={PHP_API_SECRET_KEY}"
         logging.info(f"Solicitando doc ID {doc_id} a PHP. URL: {serve_url}")
         response = requests.get(serve_url, timeout=30, stream=True)
@@ -285,6 +296,7 @@ async def process_document_text(request: ProcessRequest):  # Modelo ahora incluy
                     extracted_text = extraer_texto_pdf_docx(temp_path, file_ext)
                 elif file_ext in ['txt', 'csv']:
                     extracted_text = extraer_texto_simple(temp_path)
+                logging.info(f"Texto extraído (longitud: {len(extracted_text) if extracted_text else 0} caracteres)")
             finally:
                 if temp_path and os.path.exists(temp_path):
                     try:
@@ -295,10 +307,10 @@ async def process_document_text(request: ProcessRequest):  # Modelo ahora incluy
         else:
             extracted_text = "[Extracción no soportada para este tipo de archivo]"
 
-        if extracted_text is None:
-            raise ValueError("Fallo la extracción de texto.")
+        if extracted_text is None or extracted_text.strip() == "":
+            raise ValueError("Fallo la extracción de texto; el documento puede no contener texto extraíble.")
 
-        # 4. Actualizar BD (filtrando por tenant_id)
+        # 4. Actualizar BD (Filtrando por tenant_id)
         logging.info(f"Actualizando BD doc ID {doc_id} tenant {current_tenant_id}...")
         with conn.cursor() as cursor:
             sql_update = """
@@ -308,7 +320,7 @@ async def process_document_text(request: ProcessRequest):  # Modelo ahora incluy
             """
             cursor.execute(sql_update, (extracted_text, doc_id, current_user_id, current_tenant_id))
             if cursor.rowcount == 0:
-                logging.warning(f"UPDATE texto no afectó filas doc {doc_id}/tenant {current_tenant_id}")
+                logging.warning(f"UPDATE no afectó filas para doc {doc_id}/tenant {current_tenant_id}")
         conn.commit()
         logging.info(f"BD actualizada doc ID {doc_id}.")
         return ProcessResponse(success=True, message="Documento procesado.")
@@ -317,7 +329,7 @@ async def process_document_text(request: ProcessRequest):  # Modelo ahora incluy
         logging.error(f"Assert error doc {doc_id}: {e}")
         return ProcessResponse(success=False, error=str(e))
     except requests.exceptions.RequestException as e:
-        logging.error(f"Error PHP bridge doc {doc_id}: {e}")
+        logging.error(f"Error PHP Bridge en doc {doc_id}: {e}")
         return ProcessResponse(success=False, error=f"Error conexión PHP: {e}")
     except (Exception, psycopg2.Error) as e:
         logging.error(f"Error procesando doc {doc_id}: {e}", exc_info=True)
@@ -331,16 +343,14 @@ async def process_document_text(request: ProcessRequest):  # Modelo ahora incluy
         if conn and not conn.closed:
             conn.close()
 
-
 # --- Endpoint de consulta (/consulta - MODIFICADO) ---
 @app.post("/consulta", response_model=RespuestaConsulta)
-def consultar_agente(datos: PeticionConsulta): # Modelo ahora acepta user_id y tenant_id
-    if not client: raise HTTPException(status_code=503, detail="Servicio IA no configurado.")
+def consultar_agente(datos: PeticionConsulta):
+    if not client:
+        raise HTTPException(status_code=503, detail="Servicio IA no configurado.")
 
-    # --- OBTENER IDs ---
     current_user_id = datos.user_id
     current_tenant_id = datos.tenant_id
-    # AÑADIDO: Validar que los IDs necesarios están presentes
     if not current_user_id or not current_tenant_id:
         logging.error("Llamada a /consulta sin user_id o tenant_id.")
         raise HTTPException(status_code=400, detail="User ID y Tenant ID son requeridos.")
@@ -350,34 +360,35 @@ def consultar_agente(datos: PeticionConsulta): # Modelo ahora acepta user_id y t
     forzar_busqueda_web = datos.buscar_web
     logging.info(f"Consulta: User={current_user_id}, Tenant={current_tenant_id}, Espec='{especializacion}', Web={forzar_busqueda_web}")
 
-    # --- Obtener Prompt Personalizado (MODIFICADO: usa tenant_id) ---
+    # Obtener prompt personalizado
     custom_prompt_text = ""
-    if DB_CONFIGURED: 
+    if DB_CONFIGURED:
         conn_prompt = get_db_connection()
         if conn_prompt:
             try:
                 with conn_prompt.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-                    # MODIFICADO: Añadir AND tenant_id = %s
                     sql_prompt = "SELECT custom_prompt FROM user_settings WHERE user_id = %s AND tenant_id = %s"
-                    cursor.execute(sql_prompt, (current_user_id, current_tenant_id)) # Pasar ambos IDs
+                    cursor.execute(sql_prompt, (current_user_id, current_tenant_id))
                     result = cursor.fetchone()
                     if result and result.get('custom_prompt'):
                         custom_prompt_text = result['custom_prompt'].strip()
                         logging.info(f"Prompt personalizado OK para user {current_user_id}/tenant {current_tenant_id}.")
-            except Exception as e: logging.error(f"Error BD get prompt user {current_user_id}/tenant {current_tenant_id}: {e}")
+            except Exception as e:
+                logging.error(f"Error BD get prompt user {current_user_id}/tenant {current_tenant_id}: {e}")
             finally:
-                if conn_prompt: conn_prompt.close()
-        else: logging.warning(f"No conexión BD para prompt user {current_user_id}")
+                if conn_prompt:
+                    conn_prompt.close()
+        else:
+            logging.warning(f"No conexión BD para prompt user {current_user_id}")
 
-    # --- Obtener Contexto Documental (MODIFICADO: usa tenant_id) ---
+    # Obtener contexto documental
     document_context = ""
-    if DB_CONFIGURED: 
+    if DB_CONFIGURED:
         conn_docs = get_db_connection()
         if conn_docs:
             try:
                 with conn_docs.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
                     search_query = mensaje_usuario
-                    # MODIFICADO: Añadir AND tenant_id = %s
                     sql_fts = """
                         SELECT original_filename, extracted_text, ts_rank(fts_vector, plainto_tsquery('spanish', %s)) as relevance
                         FROM user_documents
@@ -387,112 +398,127 @@ def consultar_agente(datos: PeticionConsulta): # Modelo ahora acepta user_id y t
                           AND extracted_text IS NOT NULL AND extracted_text != '' AND NOT extracted_text LIKE '[Error%%'
                         ORDER BY relevance DESC LIMIT 3
                     """
-                    cursor.execute(sql_fts, (search_query, current_user_id, current_tenant_id, search_query)) # Pasar tenant_id
+                    cursor.execute(sql_fts, (search_query, current_user_id, current_tenant_id, search_query))
                     relevant_docs = cursor.fetchall()
                     if relevant_docs:
                         context_parts = ["\n\n### Contexto Relevante de Documentos del Usuario ###"]
                         current_token_count = 0
                         for doc in relevant_docs:
-                             filename = doc['original_filename']; text = doc['extracted_text']; doc_tokens = len(text.split()) * 1.3 # Estimación tokens
-                             if current_token_count + doc_tokens < 3500: # Límite ejemplo
+                             filename = doc['original_filename']
+                             text = doc['extracted_text']
+                             doc_tokens = len(text.split()) * 1.3  # Estimación de tokens
+                             if current_token_count + doc_tokens < 3500:
                                  context_parts.append(f"\n--- Documento: {filename} ---")
-                                 available_chars = int((3500-current_token_count)/1.3) # Estimación chars
-                                 context_parts.append(text[:available_chars]) 
+                                 available_chars = int((3500 - current_token_count) / 1.3)
+                                 context_parts.append(text[:available_chars])
                                  current_token_count += doc_tokens
-                             else: break # Detener si excede límite
+                             else:
+                                 break
                         document_context = "\n".join(context_parts)
-                        logging.info(f"Contexto RAG OK ({len(relevant_docs)} docs) user {current_user_id}/tenant {current_tenant_id}")
-            except Exception as e: logging.error(f"Error BD FTS user {current_user_id}/tenant {current_tenant_id}: {e}")
+                        logging.info(f"Contexto RAG OK ({len(relevant_docs)} docs) for user {current_user_id}/tenant {current_tenant_id}")
+            except Exception as e:
+                logging.error(f"Error BD FTS user {current_user_id}/tenant {current_tenant_id}: {e}")
             finally:
-                if conn_docs: conn_docs.close()
-        else: logging.warning(f"No conexión BD para docs user {current_user_id}")
+                if conn_docs:
+                    conn_docs.close()
+        else:
+            logging.warning(f"No conexión BD para docs user {current_user_id}")
 
-    # --- Combinar Prompts (MODIFICADO: incluye custom_prompt) ---
+    # Combinar prompts
     prompt_especifico = PROMPT_ESPECIALIZACIONES.get(especializacion, PROMPT_ESPECIALIZACIONES["general"])
     system_prompt_parts = [BASE_PROMPT_CONSULTA, prompt_especifico]
-    if custom_prompt_text: system_prompt_parts.append(f"\n\n### Instrucciones Adicionales Usuario ###\n{custom_prompt_text}")
-    if document_context: system_prompt_parts.append(document_context)
+    if custom_prompt_text:
+        system_prompt_parts.append(f"\n\n### Instrucciones Adicionales Usuario ###\n{custom_prompt_text}")
+    if document_context:
+        system_prompt_parts.append(document_context)
     system_prompt = "\n".join(filter(None, system_prompt_parts))
     logging.debug(f"Prompt Final (Inicio): {system_prompt[:500]}...")
 
-    # --- Llamada OpenAI y búsqueda web (Sin cambios funcionales) ---
+    # Llamada a OpenAI
     texto_respuesta_final = ""
     try:
         logging.info("Llamada OpenAI para consulta...")
         respuesta_inicial = client.chat.completions.create(
-            model="gpt-4-turbo", 
-            messages=[ {"role": "system", "content": system_prompt}, {"role": "user", "content": mensaje_usuario} ],
-            temperature=0.5, max_tokens=1500
+            model="gpt-4-turbo",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": mensaje_usuario}
+            ],
+            temperature=0.5,
+            max_tokens=1500
         )
         texto_respuesta_final = respuesta_inicial.choices[0].message.content.strip()
         
-        # Búsqueda web
-        if any(frase in texto_respuesta_final.lower() for frase in FRASES_BUSQUEDA) or forzar_busqueda_web: # Modificado para incluir forzar_busqueda_web aquí
+        # Búsqueda web si es necesario
+        if any(frase in texto_respuesta_final.lower() for frase in FRASES_BUSQUEDA) or forzar_busqueda_web:
             logging.info("Realizando búsqueda web (forzada o necesaria)...")
             web_resultados_html = buscar_google(mensaje_usuario)
-            texto_respuesta_final += "\n\n" + web_resultados_html 
+            texto_respuesta_final += "\n\n" + web_resultados_html
             logging.info("Resultados web añadidos.")
-
-    except APIError as e: logging.error(f"Error OpenAI /consulta: {e}"); raise HTTPException(503, f"Error IA: {e.message}")
-    except Exception as e: logging.error(f"Error /consulta: {e}", exc_info=True); raise HTTPException(500, "Error interno.")
+    except APIError as e:
+        logging.error(f"Error OpenAI /consulta: {e}")
+        raise HTTPException(status_code=503, detail=f"Error IA: {e.message}")
+    except Exception as e:
+        logging.error(f"Error /consulta: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error interno.")
     
     return RespuestaConsulta(respuesta=texto_respuesta_final)
-
 
 # --- Endpoint /analizar-documento (MODIFICADO) ---
 @app.post("/analizar-documento", response_model=RespuestaAnalisis)
 async def analizar_documento(
     file: UploadFile = File(...),
     especializacion: str = Form("general"),
-    user_id: int | None = Form(None),    # <-- ACEPTA user_id
-    tenant_id: int | None = Form(None)   # <-- ACEPTA tenant_id
+    user_id: int | None = Form(None),
+    tenant_id: int | None = Form(None)
 ):
-    if not client: raise HTTPException(status_code=503, detail="Servicio IA no configurado.")
+    if not client:
+        raise HTTPException(status_code=503, detail="Servicio IA no configurado.")
 
-    # --- OBTENER IDs y validar ---
     current_user_id = user_id
     current_tenant_id = tenant_id
     if not current_user_id or not current_tenant_id:
          logging.error("Llamada a /analizar-documento sin user_id o tenant_id.")
          raise HTTPException(status_code=400, detail="User ID y Tenant ID son requeridos para análisis.")
 
-    filename = file.filename or "unknown"; content_type = file.content_type or ""; extension = filename.split('.')[-1].lower() if '.' in filename else ''; especializacion_lower = especializacion.lower()
+    filename = file.filename or "unknown"
+    content_type = file.content_type or ""
+    extension = filename.split('.')[-1].lower() if '.' in filename else ''
+    especializacion_lower = especializacion.lower()
     logging.info(f"Análisis: User={current_user_id}, Tenant={current_tenant_id}, File={filename}, Espec='{especializacion_lower}'")
 
-    # --- Obtener Prompt Personalizado (MODIFICADO: usa tenant_id) ---
     custom_prompt_text = ""
-    if DB_CONFIGURED: 
+    if DB_CONFIGURED:
         conn = get_db_connection()
         if conn:
             try:
                 with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-                    # MODIFICADO: Añadir AND tenant_id = %s
                     sql_prompt = "SELECT custom_prompt FROM user_settings WHERE user_id = %s AND tenant_id = %s"
-                    cursor.execute(sql_prompt, (current_user_id, current_tenant_id)) # Pasar ambos IDs
+                    cursor.execute(sql_prompt, (current_user_id, current_tenant_id))
                     result = cursor.fetchone()
                     if result and result.get('custom_prompt'):
                         custom_prompt_text = result['custom_prompt'].strip()
                         logging.info(f"Prompt personalizado OK para análisis user {current_user_id}/tenant {current_tenant_id}.")
-            except Exception as e: logging.error(f"Error BD get prompt user {current_user_id}/tenant {current_tenant_id} (analizar): {e}")
+            except Exception as e:
+                logging.error(f"Error BD get prompt user {current_user_id}/tenant {current_tenant_id} (analizar): {e}")
             finally:
-                if conn: conn.close()
-        else: logging.warning(f"No conexión BD para prompt (analizar)")
+                if conn:
+                    conn.close()
+        else:
+            logging.warning(f"No conexión BD para prompt (analizar)")
 
-    # --- Combinar Prompts ---
     prompt_especifico = PROMPT_ESPECIALIZACIONES.get(especializacion_lower, PROMPT_ESPECIALIZACIONES["general"])
     system_prompt_parts = [BASE_PROMPT_ANALISIS_DOC, prompt_especifico]
-    if custom_prompt_text: system_prompt_parts.append(f"\n\n### Instrucciones Adicionales Usuario ###\n{custom_prompt_text}")
+    if custom_prompt_text:
+        system_prompt_parts.append(f"\n\n### Instrucciones Adicionales Usuario ###\n{custom_prompt_text}")
     system_prompt = "\n".join(filter(None, system_prompt_parts))
     logging.debug(f"Prompt Final Análisis (Inicio): {system_prompt[:500]}...")
     
-    # --- Lógica Procesamiento Archivo y Llamada OpenAI (igual que v2.3.7) ---
     messages_payload = []
     IMAGE_MIMES = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"]
-    # Ajustado para que pdf/doc/etc usen extracción local como en v2.3.7
-    TEXT_EXTENSIONS = ["pdf", "doc", "docx", "txt", "csv"] 
+    TEXT_EXTENSIONS = ["pdf", "doc", "docx", "txt", "csv"]
 
     try:
-        # --- Caso Imagen (Directo a GPT-4V) ---
         if content_type in IMAGE_MIMES:
             logging.info("Procesando imagen subida para análisis.")
             image_bytes = await file.read()
@@ -500,56 +526,72 @@ async def analizar_documento(
             user_prompt = "Analiza la imagen y extrae su contenido en un informe HTML profesional."
             messages_payload = [
                 {"role": "system", "content": system_prompt},
-                # MODIFICADO: Formato de mensaje multimodal puede variar ligeramente entre versiones de API/libs
-                # Asegurarse que esto es compatible con tu versión de `openai`
-                {"role": "user", "content": [ 
+                {"role": "user", "content": [
                     {"type": "text", "text": user_prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{base64_image}"}} 
+                    {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{base64_image}"}}
                 ]}
             ]
-        
-        # --- Caso PDF, DOCX, TXT, CSV (Extracción Local) ---
-        elif extension in TEXT_EXTENSIONS: 
-            logging.info(f"Procesando archivo {extension.upper()} localmente."); 
+        elif extension in TEXT_EXTENSIONS:
+            logging.info(f"Procesando archivo {extension.upper()} localmente.")
             temp_filename = os.path.join(TEMP_DIR, f"up_analisis_{os.urandom(8).hex()}.{extension}")
             texto_extraido = ""
             saved = False
             try:
-                with open(temp_filename, "wb") as buffer: shutil.copyfileobj(file.file, buffer); saved = True
-                if extension in ['pdf', 'doc', 'docx']: texto_extraido = extraer_texto_pdf_docx(temp_filename, extension)
-                else: texto_extraido = extraer_texto_simple(temp_filename)
+                with open(temp_filename, "wb") as buffer:
+                    shutil.copyfileobj(file.file, buffer)
+                    saved = True
+                if extension in ['pdf', 'doc', 'docx']:
+                    texto_extraido = extraer_texto_pdf_docx(temp_filename, extension)
+                else:
+                    texto_extraido = extraer_texto_simple(temp_filename)
             finally:
-                if saved and os.path.exists(temp_filename): os.remove(temp_filename); logging.info(f"Temp {temp_filename} borrado.")
+                if saved and os.path.exists(temp_filename):
+                    os.remove(temp_filename)
+                    logging.info(f"Temp {temp_filename} borrado.")
             
-            if texto_extraido.startswith("[Error"): raise HTTPException(400, texto_extraido)
-            if not texto_extraido: raise HTTPException(400, f"No se extrajo texto de {extension.upper()}.")
-
+            if texto_extraido.startswith("[Error"):
+                raise HTTPException(400, texto_extraido)
+            if not texto_extraido:
+                raise HTTPException(400, f"No se extrajo texto de {extension.upper()}.")
             user_prompt = f"Redacta un informe HTML profesional basado en el siguiente texto:\n--- INICIO ---\n{texto_extraido}\n--- FIN ---"
-            messages_payload = [ {"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt} ]
-        
-        else: raise HTTPException(415, f"Tipo archivo no soportado: {content_type or extension}.")
+            messages_payload = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+        else:
+            raise HTTPException(415, f"Tipo archivo no soportado: {content_type or extension}.")
 
-        # --- Llamada a OpenAI ---
-        if not messages_payload: raise HTTPException(500, "Payload no generado.")
+        if not messages_payload:
+            raise HTTPException(500, "Payload no generado.")
         
         logging.info("Llamando a OpenAI para análisis...")
-        respuesta_informe = client.chat.completions.create(model="gpt-4-turbo", messages=messages_payload, temperature=0.3, max_tokens=2500)
+        respuesta_informe = client.chat.completions.create(
+            model="gpt-4-turbo",
+            messages=messages_payload,
+            temperature=0.3,
+            max_tokens=2500
+        )
         informe_html = respuesta_informe.choices[0].message.content.strip()
         logging.info("Informe generado.")
-
-        # Limpieza HTML opcional con BS4
-        if BS4_AVAILABLE: 
+        
+        if BS4_AVAILABLE:
              try:
                  if "<!DOCTYPE html>" in informe_html or "<html" in informe_html:
                      soup = BeautifulSoup(informe_html, 'html.parser')
                      informe_html = soup.body.decode_contents() if soup.body else informe_html
                      logging.info("HTML completo detectado, extraído body.")
-             except Exception as e: logging.error(f"Error procesar HTML con BS4: {e}")
-        if not informe_html.strip().startswith('<'): informe_html = f"<p>{informe_html}</p>"
-
-    except APIError as e: logging.error(f"Error API OpenAI /analizar: {e}"); raise HTTPException(503, f"Error IA: {e.message}")
-    except HTTPException as e: raise e 
-    except Exception as e: logging.error(f"Error /analizar: {e}", exc_info=True); raise HTTPException(500, "Error interno.")
+             except Exception as e:
+                 logging.error(f"Error procesar HTML con BS4: {e}")
+        if not informe_html.strip().startswith('<'):
+            informe_html = f"<p>{informe_html}</p>"
+    except APIError as e:
+        logging.error(f"Error API OpenAI /analizar: {e}")
+        raise HTTPException(status_code=503, detail=f"Error IA: {e.message}")
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logging.error(f"Error /analizar: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error interno.")
     finally:
         await file.close()
 
