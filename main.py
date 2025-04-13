@@ -225,40 +225,41 @@ def buscar_google(query: str) -> str:
 
 # --- Endpoint /process-document (MODIFICADO para usar tenant_id en queries) ---
 @app.post("/process-document", response_model=ProcessResponse)
-async def process_document_text(request: ProcessRequest): # Modelo ahora incluye tenant_id
+async def process_document_text(request: ProcessRequest):  # Modelo ahora incluye tenant_id
     doc_id = request.doc_id
     current_user_id = request.user_id
-    current_tenant_id = request.tenant_id # <-- OBTENIDO tenant_id
+    current_tenant_id = request.tenant_id  # <-- OBTENIDO tenant_id
 
-    # MODIFICADO: Validar que tenemos los IDs necesarios
+    # Validar que tenemos los IDs necesarios
     if not current_user_id or not current_tenant_id:
          logging.error(f"Falta user_id ({current_user_id}) o tenant_id ({current_tenant_id}) en /process-document para doc {doc_id}")
          return ProcessResponse(success=False, error="Faltan IDs de usuario o tenant.")
 
     logging.info(f"Procesar doc ID: {doc_id} user: {current_user_id} tenant: {current_tenant_id}")
 
-    if not DB_CONFIGURED or not PHP_BRIDGE_CONFIGURED: return ProcessResponse(success=False, error="Config incompleta.")
+    if not DB_CONFIGURED or not PHP_BRIDGE_CONFIGURED:
+         return ProcessResponse(success=False, error="Config incompleta.")
 
     conn = None; original_fname = None; temp_path = None
     try:
         # 1. Obtener info del documento (Filtrando por tenant_id)
-        conn = get_db_connection(); assert conn, "No se pudo conectar a BD."
+        conn = get_db_connection()
+        assert conn, "No se pudo conectar a BD."
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-            # MODIFICADO: Añadir tenant_id = %s al WHERE
             sql_select = """
                 SELECT original_filename, file_type, stored_path 
                 FROM user_documents 
                 WHERE id = %s AND user_id = %s AND tenant_id = %s 
             """
-            cursor.execute(sql_select, (doc_id, current_user_id, current_tenant_id)) # Pasar tenant_id
+            cursor.execute(sql_select, (doc_id, current_user_id, current_tenant_id))
             doc_info = cursor.fetchone()
             assert doc_info, "Documento no encontrado, no pertenece al usuario/tenant o ID incorrecto."
             original_fname = doc_info['original_filename']
             file_type = doc_info['file_type']
             stored_path = doc_info['stored_path']
 
-        # 2. Obtener contenido vía PHP Bridge (Sin cambios en esta lógica)
-        serve_url = f"{PHP_FILE_SERVE_URL}?doc_id={doc_id}&user_id={current_user_id}&api_key={PHP_API_SECRET_KEY}"
+        # 2. Obtener contenido vía PHP Bridge (se añade tenant_id en la URL)
+        serve_url = f"{PHP_FILE_SERVE_URL}?doc_id={doc_id}&user_id={current_user_id}&tenant_id={current_tenant_id}&api_key={PHP_API_SECRET_KEY}"
         logging.info(f"Solicitando doc ID {doc_id} a PHP. URL: {serve_url}")
         response = requests.get(serve_url, timeout=30, stream=True)
         response.raise_for_status()
@@ -270,7 +271,7 @@ async def process_document_text(request: ProcessRequest): # Modelo ahora incluye
             logging.error(f"Error decodificando snippet: {log_exc}")
         logging.info(f"Contenido recibido del PHP Bridge (primeros 200 caracteres): {snippet_decoded}")
 
-        # 3. Guardar temporalmente y extraer texto (Sin cambios en esta lógica)
+        # 3. Guardar temporalmente el contenido y extraer texto
         file_ext = os.path.splitext(original_fname)[1].lower().strip('.')
         extracted_text = None
         if file_ext in ['pdf', 'doc', 'docx', 'txt', 'csv']:
@@ -280,12 +281,6 @@ async def process_document_text(request: ProcessRequest): # Modelo ahora incluye
                 with os.fdopen(fd, 'wb') as temp_file:
                     for chunk in response.iter_content(chunk_size=8192):
                         temp_file.write(chunk)
-                # --- Re-abrir para hash ---
-                # with open(temp_path, 'rb') as f:
-                #     file_data = f.read()
-                #     file_hash = hashlib.sha256(file_data).hexdigest()
-                # logging.info(f"Archivo temporal guardado (hash: {file_hash})")
-                
                 if file_ext in ['pdf', 'doc', 'docx']:
                     extracted_text = extraer_texto_pdf_docx(temp_path, file_ext)
                 elif file_ext in ['txt', 'csv']:
@@ -302,30 +297,39 @@ async def process_document_text(request: ProcessRequest): # Modelo ahora incluye
 
         if extracted_text is None:
             raise ValueError("Fallo la extracción de texto.")
-        
-        # 4. Actualizar BD (Filtrando por tenant_id)
+
+        # 4. Actualizar BD (filtrando por tenant_id)
         logging.info(f"Actualizando BD doc ID {doc_id} tenant {current_tenant_id}...")
         with conn.cursor() as cursor:
-            # MODIFICADO: Añadir tenant_id = %s al WHERE
             sql_update = """
                 UPDATE user_documents 
                 SET extracted_text = %s, procesado = TRUE 
                 WHERE id = %s AND user_id = %s AND tenant_id = %s 
             """
-            cursor.execute(sql_update, (extracted_text, doc_id, current_user_id, current_tenant_id)) # Pasar tenant_id
-            if cursor.rowcount == 0: logging.warning(f"UPDATE texto no afectó filas doc {doc_id}/tenant {current_tenant_id}")
+            cursor.execute(sql_update, (extracted_text, doc_id, current_user_id, current_tenant_id))
+            if cursor.rowcount == 0:
+                logging.warning(f"UPDATE texto no afectó filas doc {doc_id}/tenant {current_tenant_id}")
         conn.commit()
         logging.info(f"BD actualizada doc ID {doc_id}.")
         return ProcessResponse(success=True, message="Documento procesado.")
-
-    except AssertionError as e: logging.error(f"Assert error doc {doc_id}: {e}"); return ProcessResponse(success=False, error=str(e))
-    except requests.exceptions.RequestException as e: logging.error(f"Error PHP bridge doc {doc_id}: {e}"); return ProcessResponse(success=False, error=f"Error conexión PHP: {e}")
-    except (Exception, psycopg2.Error) as e: 
+        
+    except AssertionError as e:
+        logging.error(f"Assert error doc {doc_id}: {e}")
+        return ProcessResponse(success=False, error=str(e))
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error PHP bridge doc {doc_id}: {e}")
+        return ProcessResponse(success=False, error=f"Error conexión PHP: {e}")
+    except (Exception, psycopg2.Error) as e:
         logging.error(f"Error procesando doc {doc_id}: {e}", exc_info=True)
-        if conn and not conn.closed: try: conn.rollback() except Exception: pass
+        if conn and not conn.closed:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         return ProcessResponse(success=False, error=f"Error interno: {e}")
-    finally: 
-        if conn and not conn.closed: conn.close()
+    finally:
+        if conn and not conn.closed:
+            conn.close()
 
 
 # --- Endpoint de consulta (/consulta - MODIFICADO) ---
