@@ -11,3 +11,4 @@ beautifulsoup4 # Opcional para limpieza HTML
 # PyMySQL # Comentado está bien
 psycopg2-binary # Para PostgreSQL
 chardet # Para detectar encoding
+httpx # <--- AÑADIDO para llamadas HTTP asíncronas a Google Places API
